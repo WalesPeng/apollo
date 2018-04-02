@@ -4,6 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 cc_library(
     name = "type",
+    srcs = ["type.cc"],
     hdrs = ["type.h"],
     deps = [
         "//modules/common:log",
@@ -15,6 +16,7 @@ cc_library(
 
 cc_library(
     name = "util",
+    srcs = ["util.cc"],
     hdrs = ["util.h"],
     deps = [
         ":type",

@@ -66,8 +66,18 @@ bool VisualizationSubnode::InitInternal() {
     AINFO << "Init shared datas successfully, data: "
           << camera_shared_data_->name();
   }
-
-  // init radar object data
+  // init cipv object data
+  if (cipv_event_id_ != -1) {
+    cipv_object_data_ = dynamic_cast<CIPVObjectData*>(
+          shared_data_manager_->GetSharedData("CIPVObjectData"));
+    if (cipv_object_data_ == nullptr) {
+            AERROR << "Failed to get CIPVObjectData.";
+            return false;
+    }
+    AINFO << "Init shared datas successfully, data: "
+          << cipv_object_data_->name();
+  }
+  //  init radar object data
   if (radar_event_id_ != -1) {
     radar_object_data_ = dynamic_cast<RadarObjectData*>(
         shared_data_manager_->GetSharedData("RadarObjectData"));
@@ -253,7 +263,8 @@ void VisualizationSubnode::SetFrameContent(const Event& event,
       content->set_radar_content(timestamp, objs->objects);
     }
   } else if (event.event_id == fusion_event_id_) {
-    if (FLAGS_show_fused_objects) {
+    bool show_fused_objects = true;
+    if (show_fused_objects) {
       AINFO << "vis_driven_event data_key = " << data_key;
       SharedDataPtr<FusionItem> fusion_item;
       if (!fusion_data_->Get(data_key, &fusion_item) ||

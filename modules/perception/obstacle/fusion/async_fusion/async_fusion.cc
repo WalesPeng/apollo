@@ -83,6 +83,7 @@ bool AsyncFusion::Init() {
   }
   AINFO << "async_fusion max_match_distance: " << max_match_distance;
   PbfBaseTrackObjectMatcher::SetMaxMatchDistance(max_match_distance);
+  PbfTrack::SetMotionFusionMethod("PbfIMFFusion");
   return true;
 }
 
@@ -109,6 +110,9 @@ PbfSensorFramePtr AsyncFusion::ConstructFrame(const SensorObjects &frame) {
 bool AsyncFusion::Fuse(const std::vector<SensorObjects> &multi_sensor_objects,
                        std::vector<ObjectPtr> *fused_objects) {
   ACHECK(fused_objects != nullptr) << "parameter fused_objects is nullptr";
+
+  AINFO << "number of sensor objects in async fusion is "
+        << multi_sensor_objects.size();
 
   // process all the frames from one of the sensors
   for (auto obj : multi_sensor_objects) {
@@ -205,8 +209,7 @@ void AsyncFusion::CollectFusedObjects(double timestamp,
       fg_obj_num++;
   }
 
-  AINFO << "fg_track_cnt = " << tracks.size();
-  AINFO << "collect objects : fg_obj_cnt = "
+  AINFO << "collect objects : fg_track_cnt = " << tracks.size()
         << ", timestamp = " << GLOG_TIMESTAMP(timestamp);
 }
 
