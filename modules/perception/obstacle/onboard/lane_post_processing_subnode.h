@@ -19,20 +19,23 @@
 #ifndef MODULES_PERCEPTION_OBSTACLE_ONBOARD_LANE_POST_PROCESSING_SUBNODE_H_
 #define MODULES_PERCEPTION_OBSTACLE_ONBOARD_LANE_POST_PROCESSING_SUBNODE_H_
 
-#include <memory>
-#include <string>
 #include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
 
 #include "Eigen/Core"
 
 #include "modules/common/adapters/adapter_manager.h"
 #include "modules/perception/obstacle/base/object.h"
-#include "modules/perception/obstacle/camera/lane_post_process/common/type.h"
 #include "modules/perception/obstacle/camera/interface/base_lane_post_processor.h"
+#include "modules/perception/obstacle/camera/lane_post_process/common/type.h"
 #include "modules/perception/obstacle/onboard/camera_shared_data.h"
 #include "modules/perception/obstacle/onboard/fusion_shared_data.h"
 #include "modules/perception/obstacle/onboard/lane_shared_data.h"
+#include "modules/perception/obstacle/onboard/motion_service.h"
 #include "modules/perception/obstacle/onboard/object_shared_data.h"
+#include "modules/perception/onboard/dag_streaming.h"
 #include "modules/perception/onboard/subnode.h"
 #include "modules/perception/onboard/subnode_helper.h"
 
@@ -52,11 +55,10 @@ class LanePostProcessingSubnode : public Subnode {
   bool InitSharedData();
   void RegistAllAlgorithms();
   bool InitAlgorithmPlugin();
-  bool InitWorkRoot();
   bool GetSharedData(const Event& event, std::shared_ptr<SensorObjects>* objs);
   void PublishDataAndEvent(const double timestamp,
                            const SharedDataPtr<LaneObjects>& lane_objects);
-  void PublishPerceptionPb(const LaneObjectsPtr &lane_objects);
+  void PublishPerceptionPb(const LaneObjectsPtr& lane_objects);
 
   std::string device_id_ = "camera";
   uint64_t seq_num_ = 0;
@@ -71,7 +73,11 @@ class LanePostProcessingSubnode : public Subnode {
   uint64_t min_processing_time_ = UINT64_MAX;
   uint64_t max_processing_time_ = 0;
   uint64_t tot_processing_time_ = 0;
+  CameraLanePostProcessOptions options_;
 
+  MotionService* motion_service_ = nullptr;
+  std::mutex mutex_;
+  EventID motion_event_id_;
   DISALLOW_COPY_AND_ASSIGN(LanePostProcessingSubnode);
 };
 

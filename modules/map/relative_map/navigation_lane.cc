@@ -55,10 +55,10 @@ bool NavigationLane::GeneratePath() {
   const auto &lane_marker = perception_obstacles_.lane_marker();
 
   // priority: merge > navigation line > perception lane marker
-  if (FLAGS_enable_navigation_line &&
+  if (config_.lane_source() == NavigationLaneConfig::OFFLINE_GENERATED &&
       navigation_info_.navigation_path_size() > 0) {
     ConvertNavigationLineToPath(path);
-    if (path->path_point().size() <= 0) {
+    if (path->path_point().size() == 0) {
       ConvertLaneMarkerToPath(lane_marker, path);
     }
   } else {
@@ -186,15 +186,6 @@ void NavigationLane::ConvertNavigationLineToPath(common::Path *path) {
       break;
     }
   }
-
-  const perception::LaneMarkers &lane_marker =
-      perception_obstacles_.lane_marker();
-  const auto &left_lane = lane_marker.left_lane_marker();
-  const auto &right_lane = lane_marker.right_lane_marker();
-  left_width_ = (std::fabs(left_lane.c0_position()) +
-                 std::fabs(right_lane.c0_position())) /
-                2.0;
-  right_width_ = left_width_;
 }
 
 // project adc_state_ onto path
@@ -203,7 +194,34 @@ bool NavigationLane::UpdateProjectionIndex(const common::Path &path) {
   // currently, only 1 navigation path is supported
   int index = 0;
   double min_d = std::numeric_limits<double>::max();
-  for (int i = last_project_index_; i + 1 < path.path_point_size(); ++i) {
+  const int path_size = path.path_point_size();
+
+  if (FLAGS_enable_cyclic_rerouting) {
+    // We create a condition here that sets the "last_project_index_" to 0,
+    // should the vehicle reach the end point of a cyclic/circular route. For
+    // cyclic/circular navigation lines where the distance between their
+    // starting and end points is very small, it is tedious and unnecessary to
+    // re-send navigation lines every time. Because the starting point and the
+    // end point cannot be completely consistent in a cyclic/circular navigaton
+    // line. The vehicle's end point is usually beyond the starting point a
+    // little when making a cyclic/circular navigation line. Therefore, the
+    // "last_project_index_" is reset to 0 if it is greater than 95% size of the
+    // navigaton line and the vehicle's current position is near the starting
+    // point of the navigatoin line.
+    const int near_end_size = static_cast<int>(path_size * 0.95);
+    if (last_project_index_ > near_end_size &&
+        last_project_index_ < path_size) {
+      if (DistanceXY(path.path_point(0), path.path_point(last_project_index_)) <
+              FLAGS_max_distance_to_navigation_line &&
+          DistanceXY(original_pose_.position(), path.path_point(0)) <
+              FLAGS_max_distance_to_navigation_line) {
+        last_project_index_ = 0;
+        return true;
+      }
+    }
+  }
+
+  for (int i = last_project_index_; i + 1 < path_size; ++i) {
     const double d = DistanceXY(original_pose_.position(), path.path_point(i));
     if (d < min_d) {
       min_d = d;
@@ -344,12 +362,18 @@ bool NavigationLane::CreateMap(const MapGenerationParam &map_config,
       perception_obstacles_.lane_marker().right_lane_marker().lane_type());
   auto *right_segment =
       right_boundary->mutable_curve()->add_segment()->mutable_line_segment();
-  const double lane_left_width = left_width_ > FLAGS_min_lane_half_width
-                                     ? left_width_
-                                     : map_config.default_left_width();
-  const double lane_right_width = right_width_ > FLAGS_min_lane_half_width
-                                      ? right_width_
-                                      : map_config.default_right_width();
+
+  const double lane_left_width =
+      left_width_ <= 0.0
+          ? map_config.default_left_width()
+          : common::math::Clamp(left_width_, FLAGS_min_lane_half_width,
+                                FLAGS_max_lane_half_width);
+  const double lane_right_width =
+      right_width_ <= 0.0
+          ? map_config.default_right_width()
+          : common::math::Clamp(right_width_, FLAGS_min_lane_half_width,
+                                FLAGS_max_lane_half_width);
+
   for (const auto &path_point : path.path_point()) {
     auto *point = line_segment->add_point();
     point->set_x(path_point.x());

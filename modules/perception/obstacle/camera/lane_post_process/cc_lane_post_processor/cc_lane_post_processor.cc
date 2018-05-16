@@ -22,40 +22,23 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
-#include <unordered_map>
+
+#include "modules/common/util/file.h"
 
 namespace apollo {
 namespace perception {
 
+using apollo::common::util::GetProtoFromFile;
 using std::pair;
-using std::shared_ptr;
 using std::string;
-using std::to_string;
-using std::unordered_map;
 using std::vector;
-
-bool CompOriginLateralDistObjectID(const pair<ScalarType, int> &a,
-                                   const pair<ScalarType, int> &b) {
-  return a.first > b.first;
-}
 
 bool CCLanePostProcessor::Init() {
   // 1. get model config
-  ConfigManager *config_manager = ConfigManager::instance();
-
-  const ModelConfig *model_config =
-      config_manager->GetModelConfig(this->name());
-  if (model_config == nullptr) {
-    AERROR << "not found model: " << this->name();
-    return false;
-  }
+  CHECK(GetProtoFromFile(FLAGS_cc_lane_post_processor_config_file, &config_));
 
   // 2. get parameters
-  string space_type;
-  if (!model_config->GetValue("space_type", &space_type)) {
-    AERROR << "space type not found.";
-    return false;
-  }
+  string space_type = config_.space_type();
   if (space_type == "vehicle") {
     options_.space_type = SpaceType::VEHICLE;
   } else if (space_type == "image") {
@@ -67,97 +50,56 @@ bool CCLanePostProcessor::Init() {
   }
   options_.frame.space_type = options_.space_type;
 
-  if (!model_config->GetValue("image_width", &image_width_)) {
-    AERROR << "image width not found.";
+  if (!config_.has_image_width() || !config_.has_image_height()) {
+    AERROR << "image width or height not found.";
     return false;
   }
-  if (!model_config->GetValue("image_height", &image_height_)) {
-    AERROR << "image height not found.";
-    return false;
-  }
+  image_width_ = config_.image_width();
+  image_height_ = config_.image_height();
 
-  std::vector<float> roi;
-  if (!model_config->GetValue("roi", &roi)) {
-    AERROR << "roi not found.";
-    return false;
-  }
-  if (static_cast<int>(roi.size()) != 4) {
-    AERROR << "roi format error.";
+  vector<float> roi;
+  if (config_.roi_size() != 4) {
+    AERROR << "roi format error. size = " << config_.roi_size();
     return false;
   } else {
-    roi_.x = static_cast<int>(roi[0]);
-    roi_.y = static_cast<int>(roi[1]);
-    roi_.width = static_cast<int>(roi[2]);
-    roi_.height = static_cast<int>(roi[3]);
+    roi_.x = config_.roi(0);
+    roi_.y = config_.roi(1);
+    roi_.width = config_.roi(2);
+    roi_.height = config_.roi(3);
     options_.frame.image_roi = roi_;
-    AINFO << "project ROI = [" << roi_.x << ", " << roi_.y << ", "
-          << roi_.x + roi_.width - 1 << ", " << roi_.y + roi_.height - 1 << "]";
+    ADEBUG << "project ROI = [" << roi_.x << ", " << roi_.y << ", "
+           << roi_.x + roi_.width - 1 << ", " << roi_.y + roi_.height - 1
+           << "]";
   }
 
-  if (!model_config->GetValue("use_non_mask", &options_.frame.use_non_mask)) {
-    AERROR << "the use_non_mask parameter not found.";
-    return false;
-  }
+  options_.frame.use_non_mask = config_.use_non_mask();
 
-  std::vector<float> non_mask_polygon_points;
-  if (!model_config->GetValue("non_mask", &non_mask_polygon_points)) {
-    AERROR << "non_mask points not found.";
-    return false;
-  }
-
-  if (non_mask_polygon_points.size() % 2 != 0) {
+  if (config_.non_mask_size() % 2 != 0) {
     AERROR << "the number of point coordinate values should be even.";
     return false;
   }
-  size_t non_mask_polygon_point_num = non_mask_polygon_points.size() / 2;
+  size_t non_mask_polygon_point_num = config_.non_mask_size() / 2;
 
   non_mask_.reset(new NonMask(non_mask_polygon_point_num));
   for (size_t i = 0; i < non_mask_polygon_point_num; ++i) {
-    non_mask_->AddPolygonPoint(non_mask_polygon_points.at(2 * i),
-                               non_mask_polygon_points.at(2 * i + 1));
+    non_mask_->AddPolygonPoint(config_.non_mask(2 * i),
+                               config_.non_mask(2 * i + 1));
   }
 
-  if (!model_config->GetValue("lane_map_confidence_thresh",
-                              &options_.lane_map_conf_thresh)) {
-    AERROR << "the confidence threshold of label map not found.";
-    return false;
-  }
-
-  if (!model_config->GetValue("cc_split_siz", &options_.cc_split_siz)) {
-    AERROR << "maximum bounding-box size for splitting CC not found.";
-    return false;
-  }
-  if (!model_config->GetValue("cc_split_len", &options_.cc_split_len)) {
-    AERROR << "unit length for splitting CC not found.";
-    return false;
-  }
+  options_.lane_map_conf_thresh = config_.lane_map_confidence_thresh();
+  options_.cc_split_siz = config_.cc_split_siz();
+  options_.cc_split_len = config_.cc_split_len();
 
   // parameters on generating markers
-  if (!model_config->GetValue("min_cc_pixel_num",
-                              &options_.frame.min_cc_pixel_num)) {
-    AERROR << "minimum CC pixel number not found.";
-    return false;
-  }
-
-  if (!model_config->GetValue("min_cc_size", &options_.frame.min_cc_size)) {
-    AERROR << "minimum CC size not found.";
-    return false;
-  }
-
-  if (!model_config->GetValue(options_.frame.space_type == SpaceType::IMAGE
-                                  ? "min_y_search_offset_image"
-                                  : "min_y_search_offset",
-                              &options_.frame.min_y_search_offset)) {
-    AERROR << "minimum verticle offset used for marker association not found.";
-    return false;
-  }
+  options_.frame.min_cc_pixel_num = config_.min_cc_pixel_num();
+  options_.frame.min_cc_size = config_.min_cc_size();
+  options_.frame.min_y_search_offset =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.min_y_search_offset_image()
+           : config_.min_y_search_offset());
 
   // parameters on marker association
-  string assoc_method;
-  if (!model_config->GetValue("assoc_method", &assoc_method)) {
-    AERROR << "marker association method not found.";
-    return false;
-  }
+  string assoc_method = config_.assoc_method();
   if (assoc_method == "greedy_group_connect") {
     options_.frame.assoc_param.method = AssociationMethod::GREEDY_GROUP_CONNECT;
   } else {
@@ -165,167 +107,93 @@ bool CCLanePostProcessor::Init() {
     return false;
   }
 
-  if (!model_config->GetValue(options_.frame.space_type == SpaceType::IMAGE
-                                  ? "assoc_min_distance_image"
-                                  : "assoc_min_distance",
-                              &options_.frame.assoc_param.min_distance)) {
-    AERROR << "minimum distance threshold for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_min_distance = " << options_.frame.assoc_param.min_distance;
+  options_.frame.assoc_param.min_distance =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.assoc_min_distance_image()
+           : config_.assoc_min_distance());
+  ADEBUG << "assoc_min_distance = " << options_.frame.assoc_param.min_distance;
 
-  if (!model_config->GetValue(options_.frame.space_type == SpaceType::IMAGE
-                                  ? "assoc_max_distance_image"
-                                  : "assoc_max_distance",
-                              &options_.frame.assoc_param.max_distance)) {
-    AERROR << "maximum distance threshold for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_max_distance = " << options_.frame.assoc_param.max_distance;
+  options_.frame.assoc_param.max_distance =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.assoc_max_distance_image()
+           : config_.assoc_max_distance());
+  ADEBUG << "assoc_max_distance = " << options_.frame.assoc_param.max_distance;
 
-  if (!model_config->GetValue("assoc_distance_weight",
-                              &options_.frame.assoc_param.distance_weight)) {
-    AERROR << "distance weight for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_distance_weight = "
-        << options_.frame.assoc_param.distance_weight;
+  options_.frame.assoc_param.distance_weight = config_.assoc_distance_weight();
+  ADEBUG << "assoc_distance_weight = "
+         << options_.frame.assoc_param.distance_weight;
 
-  if (!model_config->GetValue(
-          options_.frame.space_type == SpaceType::IMAGE
-              ? "assoc_max_deviation_angle_image"
-              : "assoc_max_deviation_angle",
-          &options_.frame.assoc_param.max_deviation_angle)) {
-    AERROR << "max deviation angle threshold "
-           << "for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_max_deviation_angle = "
-        << options_.frame.assoc_param.max_deviation_angle;
+  options_.frame.assoc_param.max_deviation_angle =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.assoc_max_deviation_angle_image()
+           : config_.assoc_max_deviation_angle());
+  ADEBUG << "assoc_max_deviation_angle = "
+         << options_.frame.assoc_param.max_deviation_angle;
   options_.frame.assoc_param.max_deviation_angle *= (M_PI / 180.0);
 
-  if (!model_config->GetValue(
-          "assoc_deviation_angle_weight",
-          &options_.frame.assoc_param.deviation_angle_weight)) {
-    AERROR << "deviation angle weight "
-           << "for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_deviation_angle_weight = "
-        << options_.frame.assoc_param.deviation_angle_weight;
+  options_.frame.assoc_param.deviation_angle_weight =
+      config_.assoc_deviation_angle_weight();
+  ADEBUG << "assoc_deviation_angle_weight = "
+         << options_.frame.assoc_param.deviation_angle_weight;
 
-  if (!model_config->GetValue(options_.frame.space_type == SpaceType::IMAGE
-                                  ? "assoc_max_relative_orie_image"
-                                  : "assoc_max_relative_orie",
-                              &options_.frame.assoc_param.max_relative_orie)) {
-    AERROR << "max relative orientation threshold "
-           << "for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_max_relative_orie = "
-        << options_.frame.assoc_param.max_relative_orie;
+  options_.frame.assoc_param.max_relative_orie =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.assoc_max_relative_orie_image()
+           : config_.assoc_max_relative_orie());
+  ADEBUG << "assoc_max_relative_orie = "
+         << options_.frame.assoc_param.max_relative_orie;
   options_.frame.assoc_param.max_relative_orie *= (M_PI / 180.0);
 
-  if (!model_config->GetValue(
-          "assoc_relative_orie_weight",
-          &options_.frame.assoc_param.relative_orie_weight)) {
-    AERROR << "relative orientation weight "
-           << "for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_relative_orie_weight = "
-        << options_.frame.assoc_param.relative_orie_weight;
+  options_.frame.assoc_param.relative_orie_weight =
+      config_.assoc_relative_orie_weight();
+  ADEBUG << "assoc_relative_orie_weight = "
+         << options_.frame.assoc_param.relative_orie_weight;
 
-  if (!model_config->GetValue(
-          options_.frame.space_type == SpaceType::IMAGE
-              ? "assoc_max_departure_distance_image"
-              : "assoc_max_departure_distance",
-          &options_.frame.assoc_param.max_departure_distance)) {
-    AERROR << "max departure distance threshold "
-           << "for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_max_departure_distance = "
-        << options_.frame.assoc_param.max_departure_distance;
+  options_.frame.assoc_param.max_departure_distance =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.assoc_max_departure_distance_image()
+           : config_.assoc_max_departure_distance());
+  ADEBUG << "assoc_max_departure_distance = "
+         << options_.frame.assoc_param.max_departure_distance;
 
-  if (!model_config->GetValue(
-          "assoc_departure_distance_weight",
-          &options_.frame.assoc_param.departure_distance_weight)) {
-    AERROR << "departure distance weight "
-           << "for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_departure_distance_weight = "
-        << options_.frame.assoc_param.departure_distance_weight;
+  options_.frame.assoc_param.departure_distance_weight =
+      config_.assoc_departure_distance_weight();
+  ADEBUG << "assoc_departure_distance_weight = "
+         << options_.frame.assoc_param.departure_distance_weight;
 
-  if (!model_config->GetValue(
-          options_.frame.space_type == SpaceType::IMAGE
-              ? "assoc_min_orientation_estimation_size_image"
-              : "assoc_min_orientation_estimation_size",
-          &options_.frame.assoc_param.min_orientation_estimation_size)) {
-    AERROR << "minimum size threshold used for orientation estimation"
-           << " in marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_min_orientation_estimation_size = "
-        << options_.frame.assoc_param.min_orientation_estimation_size;
+  options_.frame.assoc_param.min_orientation_estimation_size =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.assoc_min_orientation_estimation_size_image()
+           : config_.assoc_min_orientation_estimation_size());
+  ADEBUG << "assoc_min_orientation_estimation_size = "
+         << options_.frame.assoc_param.min_orientation_estimation_size;
 
   if (options_.frame.assoc_param.method ==
       AssociationMethod::GREEDY_GROUP_CONNECT) {
-    if (!model_config->GetValue(
-            "max_group_prediction_marker_num",
-            &options_.frame.group_param.max_group_prediction_marker_num)) {
-      AERROR << "maximum number of markers used for orientation estimation"
-             << " in greed group connect association not found.";
-      return false;
-    }
+    options_.frame.group_param.max_group_prediction_marker_num =
+        config_.max_group_prediction_marker_num();
   } else {
     AERROR << "invalid marker association method.";
     return false;
   }
-
-  if (!model_config->GetValue(
-          "orientation_estimation_skip_marker_num",
-          &options_.frame.orientation_estimation_skip_marker_num)) {
-    AERROR << "skip marker number used for orientation estimation in "
-           << "marker association";
-    return false;
-  }
+  options_.frame.orientation_estimation_skip_marker_num =
+      config_.orientation_estimation_skip_marker_num();
 
   // parameters on finding lane objects
-  if (!model_config->GetValue("lane_interval_distance",
-                              &options_.frame.lane_interval_distance)) {
-    AERROR << "The predefined lane interval distance is not found.";
-    return false;
-  }
-
-  if (!model_config->GetValue(options_.frame.space_type == SpaceType::IMAGE
-                                  ? "min_instance_size_prefiltered_image"
-                                  : "min_instance_size_prefiltered",
-                              &options_.frame.min_instance_size_prefiltered)) {
-    AERROR << "The minimum size of lane instances "
-           << "to be prefiltered is not found.";
-    return false;
-  }
-
-  if (!model_config->GetValue(options_.frame.space_type == SpaceType::IMAGE
-                                  ? "max_size_to_fit_straight_line_image"
-                                  : "max_size_to_fit_straight_line",
-                              &options_.frame.max_size_to_fit_straight_line)) {
-    AERROR << "The maximum size used for fitting straight lines "
-           << "on lane instances is not found.";
-    return false;
-  }
+  options_.frame.lane_interval_distance = config_.lane_interval_distance();
+  options_.frame.min_instance_size_prefiltered =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.min_instance_size_prefiltered_image()
+           : config_.min_instance_size_prefiltered());
+  options_.frame.max_size_to_fit_straight_line =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.max_size_to_fit_straight_line_image()
+           : config_.max_size_to_fit_straight_line());
 
   // 3. initialize projector
-  if (!model_config->GetValue("max_distance_to_see_for_transformer",
-                              &max_distance_to_see_)) {
-    AERROR << "maximum perception distance for transformer is not found, "
-              "use default value";
-    return false;
-  }
-  AINFO << "initial max_distance_to_see: " << max_distance_to_see_
-        << " (meters)";
+  max_distance_to_see_ = config_.max_distance_to_see_for_transformer();
+  ADEBUG << "initial max_distance_to_see: " << max_distance_to_see_
+         << " (meters)";
 
   if (options_.space_type == SpaceType::VEHICLE) {
     projector_.reset(new Projector<ScalarType>());
@@ -340,8 +208,20 @@ bool CCLanePostProcessor::Init() {
 
   time_stamp_ = 0.0;
   frame_id_ = 0;
+
+  int lane_map_width = config_.lane_map_width();
+  int lane_map_height = config_.lane_map_height();
+#if CUDA_CC
   cc_generator_.reset(
-      new ConnectedComponentGenerator(image_width_, image_height_, roi_));
+      new ConnectedComponentGeneratorGPU(image_width_, image_height_, roi_));
+#else
+  cc_generator_.reset(new ConnectedComponentGenerator(
+      lane_map_width, lane_map_height,
+      cv::Rect(0, 0, lane_map_width, lane_map_height)));
+#endif
+
+  scale_ = config_.lane_map_scale();
+  start_y_pos_ = config_.start_y_pos();
   cur_frame_.reset(new LaneFrame);
 
   is_init_ = true;
@@ -423,7 +303,10 @@ bool CCLanePostProcessor::AddInstanceIntoLaneObject(
     AERROR << "failed to fit " << lane_object->order
            << " order polynomial curve.";
   }
+  // Option 1: Use C0 for lateral distance
   lane_object->lateral_distance = lane_object->model(0);
+  // Option 2: Use y-value of closest point.
+  // lane_object->lateral_distance = lane_object->pos[0].y();
 
   return true;
 }
@@ -444,7 +327,7 @@ bool CCLanePostProcessor::AddInstanceIntoLaneObjectImage(
 
   auto graph = cur_frame_->graph(instance.graph_id);
 
-  ADEBUG << "show points for lane object: ";
+  //  ADEBUG << "show points for lane object: ";
 
   ScalarType y_offset = static_cast<ScalarType>(image_height_ - 1);
 
@@ -531,7 +414,10 @@ bool CCLanePostProcessor::AddInstanceIntoLaneObjectImage(
            << " order polynomial curve";
   }
 
+  // Option 1: Use C0 for lateral distance
   lane_object->lateral_distance = lane_object->model(0);
+  // Option 2: Use y-value of closest point.
+  // lane_object->lateral_distance = lane_object->pos[0].y();
 
   return true;
 }
@@ -575,7 +461,7 @@ bool CCLanePostProcessor::GenerateLaneInstances(const cv::Mat &lane_map) {
   vector<ConnectedComponentPtr> cc_list;
   cc_generator_->FindConnectedComponents(lane_mask, &cc_list);
 
-  AINFO << "number of connected components = " << cc_list.size();
+  ADEBUG << "number of connected components = " << cc_list.size();
 
   // 3. split CC and find inner edges
   int tot_inner_edge_count = 0;
@@ -596,9 +482,10 @@ bool CCLanePostProcessor::GenerateLaneInstances(const cv::Mat &lane_map) {
   cur_frame_.reset(new LaneFrame);
 
   if (options_.frame.space_type == SpaceType::IMAGE) {
-    cur_frame_->Init(cc_list, non_mask_, options_.frame);
+    cur_frame_->Init(cc_list, non_mask_, options_.frame, scale_, start_y_pos_);
   } else if (options_.frame.space_type == SpaceType::VEHICLE) {
-    cur_frame_->Init(cc_list, non_mask_, projector_, options_.frame);
+    cur_frame_->Init(cc_list, non_mask_, projector_, options_.frame, scale_,
+                     start_y_pos_);
   } else {
     AERROR << "unknown space type: " << options_.frame.space_type;
     return false;
@@ -606,7 +493,7 @@ bool CCLanePostProcessor::GenerateLaneInstances(const cv::Mat &lane_map) {
 
   cur_frame_->Process(cur_lane_instances_);
 
-  AINFO << "number of lane instances = " << cur_lane_instances_->size();
+  //  ADEBUG << "number of lane instances = " << cur_lane_instances_->size();
 
   return true;
 }
@@ -623,15 +510,10 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
     AERROR << "input lane map is empty";
     return false;
   }
-  if (lane_map.cols != image_width_) {
-    AERROR << "input lane map width does not match: "
-           << "(" << lane_map.cols << " vs. " << image_width_ << ")";
-    return false;
-  }
-  if (lane_map.rows != image_height_) {
-    AERROR << "input lane map height does not match: "
-           << "(" << lane_map.rows << " vs. " << image_height_ << ")";
-    return false;
+
+  if (options.use_lane_history &&
+      (!use_history_ || time_stamp_ > options.timestamp)) {
+    InitLaneHistory();
   }
 
   time_stamp_ = options.timestamp;
@@ -647,7 +529,6 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
   /// generate lane objects
   if (options_.space_type == SpaceType::IMAGE) {
     /// for image space coordinate
-    AINFO << "generate lane objects in image space ...";
     ScalarType x_center = static_cast<ScalarType>(roi_.x + roi_.width / 2);
 
     lane_objects->reset(new LaneObjects());
@@ -683,28 +564,29 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
         is_right_lane_found = true;
       }
 
-      AINFO << " lane object " << (*lane_objects)->back().GetSpatialLabel()
-            << " has " << (*lane_objects)->back().pos.size() << " points: "
-            << "lateral distance = "
-            << (*lane_objects)->back().lateral_distance;
+      ADEBUG << " lane object " << (*lane_objects)->back().GetSpatialLabel()
+             << " has " << (*lane_objects)->back().pos.size() << " points: "
+             << "lateral distance = "
+             << (*lane_objects)->back().lateral_distance;
     }
 
   } else {
     /// for vehicle space coordinate
     // select lane instances with non-overlap assumption
-    AINFO << "generate lane objects ...";
+    // ADEBUG << "generate lane objects ...";
     lane_objects->reset(new LaneObjects());
     (*lane_objects)->reserve(2 * MAX_LANE_SPATIAL_LABELS);
     vector<pair<ScalarType, int>> origin_lateral_dist_object_id;
     origin_lateral_dist_object_id.reserve(2 * MAX_LANE_SPATIAL_LABELS);
     int count_lane_objects = 0;
+    ADEBUG << "cur_lane_instances_->size(): " << cur_lane_instances_->size();
     for (auto it = cur_lane_instances_->begin();
          it != cur_lane_instances_->end(); ++it) {
       ADEBUG << "for lane instance " << it - cur_lane_instances_->begin();
 
       // ignore current instance if it is too small
       if (it->siz < options_.frame.min_instance_size_prefiltered) {
-        ADEBUG << "current instance is too small: " << it->siz;
+        ADEBUG << "current lane instance is too small: " << it->siz;
         continue;
       }
 
@@ -713,7 +595,12 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
 
       if ((*lane_objects)->empty()) {
         // create a new lane object
+
         (*lane_objects)->push_back(cur_object);
+        ADEBUG << " lane object XXX has"
+               << (*lane_objects)->at(count_lane_objects).pos.size()
+               << " points, lateral distance="
+               << (*lane_objects)->at(count_lane_objects).lateral_distance;
         origin_lateral_dist_object_id.push_back(
             std::make_pair(cur_object.lateral_distance, count_lane_objects++));
         ADEBUG << "generate a new lane object from instance";
@@ -733,14 +620,18 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
 
         // determine whether cross over or not
         for (size_t i = 0; i < cur_object.pos.size(); ++i) {
-          ScalarType deta_y =
+          ScalarType delta_y =
               cur_object.pos[i].y() - PolyEval(cur_object.pos[i].x(),
                                                (*lane_objects)->at(k).order,
                                                (*lane_objects)->at(k).model);
+          // lateral_distances[k].first keeps min delta_y of lane line points
+          // from the fitted curve
           lateral_distances[k].first =
-              std::min(lateral_distances[k].first, deta_y);
+              std::min(lateral_distances[k].first, delta_y);
+          // lateral_distances[k].first keeps max delta_y of lane line points
+          // from the fitted curve
           lateral_distances[k].second =
-              std::max(lateral_distances[k].second, deta_y);
+              std::max(lateral_distances[k].second, delta_y);
           if (lateral_distances[k].first * lateral_distances[k].second < 0) {
             is_cross_over = true;
           }
@@ -755,12 +646,16 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
         }
       }
       if (is_cross_over) {
-        ADEBUG << "instance crosses over lane object "
-               << cross_over_lane_object_id;
+        ADEBUG << "Lane " << cross_over_lane_object_id
+               << "crosses over cur_lane. Eliminated.";
+        for (size_t i = 0; i < cur_object.pos.size(); ++i) {
+          ADEBUG << "[" << cur_object.pos[i].x() << ", "
+                 << cur_object.pos[i].y() << "]";
+        }
         continue;
       }
 
-      // search the very left lane w.r.t. current instance
+      // search the left-most lane w.r.t. current instance so far
       int left_lane_id = -1;
       ScalarType left_lane_dist = -std::numeric_limits<ScalarType>::max();
       for (int k = 0; k < count_lane_objects; ++k) {
@@ -782,7 +677,7 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
         continue;
       }
 
-      // search the very right lane w.r.t. current instance
+      // search the right-most lane w.r.t. current instance so far
       int right_lane_id = -1;
       ScalarType right_lane_dist = std::numeric_limits<ScalarType>::max();
       for (int k = 0; k < count_lane_objects; ++k) {
@@ -803,65 +698,92 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
                << "(" << MIN_BETWEEN_LANE_DISTANCE << ")";
         continue;
       }
-
       // accept the new lane object
       (*lane_objects)->push_back(cur_object);
+      ADEBUG << " lane object XXX has"
+             << (*lane_objects)->at(count_lane_objects).pos.size()
+             << " points, lateral distance="
+             << (*lane_objects)->at(count_lane_objects).lateral_distance;
       origin_lateral_dist_object_id.push_back(
           std::make_pair(cur_object.lateral_distance, count_lane_objects++));
-      ADEBUG << "generate a new lane object from instance.";
+      //      ADEBUG << "generate a new lane object from instance.";
     }
 
     // determine spatial label of lane object
+    // Sort lanes with C0
     std::sort(origin_lateral_dist_object_id.begin(),
               origin_lateral_dist_object_id.end(),
-              CompOriginLateralDistObjectID);
-    int i_l0 = -1;
+              [](const pair<ScalarType, int> &a,
+                 const pair<ScalarType, int> &b) { return a.first > b.first; });
+
+    int index_closest_left = -1;
     for (int k = 0; k < count_lane_objects; ++k) {
       if (origin_lateral_dist_object_id[k].first >= 0) {
-        i_l0 = k;
+        index_closest_left = k;
       } else {
         break;
       }
     }
 
+    std::vector<bool> b_left_index_list(MAX_LANE_SPATIAL_LABELS, false);
     vector<int> valid_lane_objects;
     valid_lane_objects.reserve((*lane_objects)->size());
 
     // for left-side lanes
-    for (int spatial_index = 0; spatial_index <= i_l0; ++spatial_index) {
+    for (int spatial_index = 0; spatial_index <= index_closest_left;
+         ++spatial_index) {
       if (spatial_index >= MAX_LANE_SPATIAL_LABELS) {
         break;
       }
-      int i_l = i_l0 - spatial_index;
+      int i_l = index_closest_left - spatial_index;
       int object_id = origin_lateral_dist_object_id.at(i_l).second;
+      float lateral_distance = origin_lateral_dist_object_id.at(i_l).first;
+
+      int index = floor(lateral_distance * INVERSE_AVEAGE_LANE_WIDTH_METER);
+      if (index < 0 || index > MAX_LANE_SPATIAL_LABELS - 1) {
+        continue;
+      }
+      if (b_left_index_list[index] == true) {
+        continue;
+      }
+      b_left_index_list[index] = true;
       (*lane_objects)->at(object_id).spatial =
-          static_cast<SpatialLabelType>(spatial_index);
+          static_cast<SpatialLabelType>(index);
       valid_lane_objects.push_back(object_id);
-
-      AINFO << " lane object "
-            << (*lane_objects)->at(object_id).GetSpatialLabel() << " has "
-            << (*lane_objects)->at(object_id).pos.size() << " points: "
-            << "lateral distance="
-            << (*lane_objects)->at(object_id).lateral_distance;
+      ADEBUG << " lane object "
+             << (*lane_objects)->at(object_id).GetSpatialLabel() << " has "
+             << (*lane_objects)->at(object_id).pos.size() << " points: "
+             << "lateral distance="
+             << (*lane_objects)->at(object_id).lateral_distance;
     }
-
     // for right-side lanes
-    int i_r = i_l0 + 1;
+    std::vector<bool> b_right_index_list(MAX_LANE_SPATIAL_LABELS, false);
+    int i_r = index_closest_left + 1;
     for (int spatial_index = 0; spatial_index < MAX_LANE_SPATIAL_LABELS;
          ++spatial_index, ++i_r) {
       if (i_r >= count_lane_objects) {
         break;
       }
       int object_id = origin_lateral_dist_object_id.at(i_r).second;
-      (*lane_objects)->at(object_id).spatial = static_cast<SpatialLabelType>(
-          MAX_LANE_SPATIAL_LABELS + spatial_index);
-      valid_lane_objects.push_back(object_id);
+      float lateral_distance = -origin_lateral_dist_object_id.at(i_r).first;
 
-      AINFO << " lane object "
-            << (*lane_objects)->at(object_id).GetSpatialLabel() << " has "
-            << (*lane_objects)->at(object_id).pos.size() << " points: "
-            << "lateral distance="
-            << (*lane_objects)->at(object_id).lateral_distance;
+      int index = floor(lateral_distance * INVERSE_AVEAGE_LANE_WIDTH_METER);
+      if (index < 0 || index > MAX_LANE_SPATIAL_LABELS - 1) {
+        continue;
+      }
+      if (b_right_index_list[index] == true) {
+        continue;
+      }
+      b_right_index_list[index] = true;
+      (*lane_objects)->at(object_id).spatial =
+          static_cast<SpatialLabelType>(MAX_LANE_SPATIAL_LABELS + index);
+
+      valid_lane_objects.push_back(object_id);
+      ADEBUG << " lane object "
+             << (*lane_objects)->at(object_id).GetSpatialLabel() << " has "
+             << (*lane_objects)->at(object_id).pos.size() << " points: "
+             << "lateral distance="
+             << (*lane_objects)->at(object_id).lateral_distance;
     }
     if ((*lane_objects)->size() != static_cast<size_t>(count_lane_objects)) {
       AERROR << "the number of lane objects does not match.";
@@ -876,20 +798,258 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
     (*lane_objects)->resize(valid_lane_objects.size());
   }
 
-  AINFO << "number of lane objects = " << (*lane_objects)->size();
-  if (options_.space_type != SpaceType::IMAGE) {
-    if (!CompensateLaneObjects((*lane_objects))) {
-      AERROR << "fail to compensate lane objects.";
-      return false;
-    }
-  }
-  EnrichLaneInfo((*lane_objects));
+  ADEBUG << "number of lane objects = " << (*lane_objects)->size();
+  // if (options_.space_type != SpaceType::IMAGE) {
+  //   if (!CompensateLaneObjects((*lane_objects))) {
+  //     AERROR << "fail to compensate lane objects.";
+  //     return false;
+  //   }
+  // }
 
+  EnrichLaneInfo((*lane_objects));
+  ADEBUG << "use_lane_history_: " << use_history_;
+  if (use_history_) {
+    //    FilterWithLaneHistory(*lane_objects);
+    std::vector<bool> is_valid(generated_lanes_->size(), false);
+    size_t l = 0;
+    for (l = 0; l < generated_lanes_->size(); l++) {
+      CorrectWithLaneHistory(l, *lane_objects, &is_valid);
+    }
+
+    l = 0;
+    while (l < is_valid.size() && !is_valid[l]) {
+      l++;
+    }
+    if (l < is_valid.size()) {
+      lane_history_.push_back(*(*lane_objects));
+    } else {
+      if (!lane_history_.empty()) {
+        lane_history_.pop_front();
+      }
+    }
+
+    for (l = 0; l < is_valid.size(); l++) {
+      if (!is_valid[l]) {
+        (*lane_objects)->push_back(generated_lanes_->at(l));
+        AINFO << "use history instead of current lane detection";
+        AINFO << generated_lanes_->at(l).model;
+      }
+    }
+#if USE_HISTORY_TO_EXTEND_LANE
+    for (size_t i = 0; i < generated_lanes_->size(); i++) {
+      if (is_valid[i]) {
+        int j = 0;
+        if (FindLane(*(*lane_objects), generated_lanes_->at(i).spatial, &j)) {
+          ExtendLaneWithHistory(generated_lanes_->at(i),
+                                &((*lane_objects)->at(j)));
+        }
+      }
+    }
+#endif  // USE_HISTORY_TO_EXTEND_LANE
+    auto vs = options.vehicle_status;
+    for (auto &m : *motion_buffer_) {
+      m.motion *= vs.motion;
+    }
+    motion_buffer_->push_back(vs);
+  }
   return true;
 }
 
+bool CCLanePostProcessor::CorrectWithLaneHistory(int l,
+                                                 LaneObjectsPtr lane_objects,
+                                                 std::vector<bool> *is_valid) {
+  // trust current lane or not
+  auto &lane = generated_lanes_->at(l);
+  lane.pos.clear();
+  lane.longitude_start = std::numeric_limits<ScalarType>::max();
+  lane.longitude_end = 0;
+  lane.order = 0;
+  int lane_accum_num = 0;
+  for (std::size_t i = 0; i < lane_history_.size(); i++) {
+    int j = 0;
+    if (!FindLane(lane_history_[i], lane.spatial, &j)) continue;
+
+    lane_accum_num++;
+    lane.order = std::max(lane.order, lane_history_[i][j].order);
+
+    Vector2D project_p;
+    for (auto &pos : lane_history_[i][j].pos) {
+      int len = motion_buffer_->at(i).motion.cols();
+      Eigen::VectorXf p = Eigen::VectorXf::Zero(len);
+      p[0] = pos.x();
+      p[1] = pos.y();
+      p[len-1] = 1.0;
+      p = motion_buffer_->at(i).motion * p;
+      project_p << p[0], p[1];
+      if (project_p.x() <= 0) continue;
+
+      lane.longitude_start = std::min(project_p.x(), lane.longitude_start);
+      lane.longitude_end = std::max(project_p.x(), lane.longitude_end);
+      lane.pos.push_back(project_p);
+    }
+  }
+  // fit polynomial model and compute lateral distance for lane object
+  lane.point_num = lane.pos.size();
+
+  if (lane.point_num < 3 ||
+      lane.longitude_end - lane.longitude_start <
+          options_.frame.max_size_to_fit_straight_line) {
+    // fit a 1st-order polynomial curve (straight line)
+    lane.order = 1;
+  } else {
+    // fit a 2nd-order polynomial curve;
+    lane.order = 2;
+  }
+  ADEBUG << "history size: " << lane.point_num;
+  if (lane_accum_num < 2 || lane.point_num < 2 ||
+      lane.longitude_end - lane.longitude_start < 4.0) {
+    AWARN << "Failed to use history: " << lane_accum_num << " "
+          << lane.point_num << " " << lane.longitude_end - lane.longitude_start;
+    (*is_valid)[l] = true;
+    return (*is_valid)[l];
+  } else if (!PolyFit(lane.pos, lane.order, &(lane.model))) {
+    AWARN << "failed to fit " << lane.order << " order polynomial curve.";
+    (*is_valid)[l] = true;
+    return (*is_valid)[l];
+  }
+  lane.pos_curve.x_start =
+      std::min(lane.longitude_start, static_cast<ScalarType>(0));
+  lane.pos_curve.x_end =
+      std::max(lane.longitude_end, static_cast<ScalarType>(0));
+  // for polynomial curve on vehicle space
+  lane.pos_curve.a = lane.model(3);
+  lane.pos_curve.b = lane.model(2);
+  lane.pos_curve.c = lane.model(1);
+  lane.pos_curve.d = lane.model(0);
+
+  // Option 1: Use C0 for lateral distance
+  // lane_object->lateral_distance = lane_object->model(0);
+  // Option 2: Use y-value of closest point.
+  lane.lateral_distance = lane.pos[0].y();
+  int idx = 0;
+  if (!FindLane(*lane_objects, lane.spatial, &idx)) {
+    //  lane_objects->push_back(lane);
+  } else {
+    ScalarType ave_delta = 0;
+    int count = 0;
+
+    for (auto &pos : lane_objects->at(idx).pos) {
+      if (pos.x() > 1.2 * lane.longitude_end) continue;
+
+      ave_delta +=
+          std::abs(pos.y() - PolyEval(pos.x(), lane.order, lane.model));
+      count++;
+    }
+    if (count > 0 && ave_delta / count > AVEAGE_LANE_WIDTH_METER / 4.0) {
+      ADEBUG << "ave_delta is: " << ave_delta / count;
+      lane_objects->erase(lane_objects->begin() + idx);
+    } else {
+      (*is_valid)[l] = true;
+    }
+  }
+  return (*is_valid)[l];
+}
+
+void CCLanePostProcessor::ExtendLaneWithHistory(const LaneObject &history,
+                                                LaneObject *lane) {
+  if (history.longitude_end > lane->longitude_end) {
+    for (auto &p : history.pos) {
+      if (p.x() > lane->longitude_end) {
+        lane->pos.push_back(p);
+      }
+    }
+    AINFO << "extend lane with history by "
+          << history.longitude_end - lane->longitude_end;
+    lane->longitude_end = history.longitude_end;
+    lane->pos_curve.x_end =
+        std::max(lane->longitude_end, static_cast<ScalarType>(0));
+  }
+}
+
+bool CCLanePostProcessor::FindLane(const LaneObjects &lane_objects,
+                                   int spatial_label, int *index) {
+  size_t k = 0;
+  while (k < lane_objects.size() &&
+         lane_objects.at(k).spatial != spatial_label) {
+    k++;
+  }
+  if (k == lane_objects.size()) {
+    return false;
+  } else {
+    *index = k;
+    return true;
+  }
+}
+
+void CCLanePostProcessor::InitLaneHistory() {
+  use_history_ = true;
+  AINFO << "Init Lane History Start;";
+  if (!lane_history_.empty()) {
+    lane_history_.clear();
+  } else {
+    lane_history_.set_capacity(MAX_LANE_HISTORY);
+  }
+  if (motion_buffer_ != nullptr) {
+    motion_buffer_->clear();
+  } else {
+    motion_buffer_ = std::make_shared<MotionBuffer>(MAX_LANE_HISTORY);
+  }
+  if (generated_lanes_ != nullptr) {
+    generated_lanes_->clear();
+    generated_lanes_->resize(interested_labels_.size(), LaneObject());
+  } else {
+    generated_lanes_ =
+        std::make_shared<LaneObjects>(interested_labels_.size(), LaneObject());
+  }
+  for (std::size_t i = 0; i < generated_lanes_->size(); i++) {
+    generated_lanes_->at(i).spatial = interested_labels_[i];
+  }
+  AINFO << "Init Lane History Done;";
+}
+
+void CCLanePostProcessor::FilterWithLaneHistory(LaneObjectsPtr lane_objects) {
+  std::vector<int> erase_idx;
+  for (size_t i = 0; i < lane_objects->size(); i++) {
+    Eigen::VectorXf start_pos;
+    if (motion_buffer_->size() > 0) {
+      start_pos =
+        Eigen::VectorXf::Zero(motion_buffer_->at(0).motion.cols());
+      start_pos[0] = lane_objects->at(i).pos[0].x();
+      start_pos[1] = lane_objects->at(i).pos[0].y();
+      start_pos[motion_buffer_->at(0).motion.cols()-1] = 1.0;
+    }
+    for (size_t j = 0; j < lane_history_.size(); j++) {
+      // iter to find corresponding lane
+      size_t k;
+      for (k = 0; k < lane_history_[j].size(); k++) {
+        if (lane_history_[j][k].spatial == lane_objects->at(i).spatial) {
+          break;
+        }
+      }
+      // if not exist, skip
+      if (k == lane_history_[j].size()) {
+        continue;
+      }
+      // project start_pos to history, check lane stability
+      auto project_pos = motion_buffer_->at(j).motion * start_pos;
+      auto &lane_object = lane_history_[j][k];
+      ScalarType delta_y =
+          project_pos.y() -
+          PolyEval(project_pos.x(), lane_object.order, lane_object.model);
+      // delete if too far from polyline
+      if (std::abs(delta_y) > AVEAGE_LANE_WIDTH_METER) {
+        erase_idx.push_back(i);
+        break;
+      }
+    }
+  }
+  for (auto rit = erase_idx.rbegin(); rit != erase_idx.rend(); ++rit) {
+    lane_objects->erase(lane_objects->begin() + *rit);
+  }
+}
+
 bool CCLanePostProcessor::CompensateLaneObjects(LaneObjectsPtr lane_objects) {
-  if (lane_objects == NULL) {
+  if (lane_objects == nullptr) {
     AERROR << "lane_objects is a null pointer.";
     return false;
   }
@@ -914,7 +1074,6 @@ bool CCLanePostProcessor::CompensateLaneObjects(LaneObjectsPtr lane_objects) {
   }
 
   if (!has_ego_lane_left) {
-    AINFO << "add virtual lane L_0 ...";
     if (ego_lane_right_idx == -1) {
       AERROR << "failed to compensate left ego lane due to no right ego lane.";
       return false;
@@ -936,7 +1095,7 @@ bool CCLanePostProcessor::CompensateLaneObjects(LaneObjectsPtr lane_objects) {
   }
 
   if (!has_ego_lane_right) {
-    AINFO << "add virtual lane R_0 ...";
+    ADEBUG << "add virtual lane R_0 ...";
     if (ego_lane_left_idx == -1) {
       AERROR << "failed to compensate right ego lane due to no left ego lane.";
       return false;
@@ -961,7 +1120,7 @@ bool CCLanePostProcessor::CompensateLaneObjects(LaneObjectsPtr lane_objects) {
 }
 
 bool CCLanePostProcessor::EnrichLaneInfo(LaneObjectsPtr lane_objects) {
-  if (lane_objects == NULL) {
+  if (lane_objects == nullptr) {
     AERROR << "lane_objects is a null pointer.";
     return false;
   }

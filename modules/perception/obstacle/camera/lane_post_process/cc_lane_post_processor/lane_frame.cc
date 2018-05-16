@@ -151,7 +151,9 @@ ScalarType LaneFrame::ComputeMarkerPairDistance(const Marker& ref,
 
 bool LaneFrame::Init(const vector<ConnectedComponentPtr>& input_cc,
                      const shared_ptr<NonMask>& non_mask,
-                     const LaneFrameOptions& options) {
+                     const LaneFrameOptions& options,
+                     const double scale,
+                     const int start_y_pos) {
   if (options.space_type != SpaceType::IMAGE) {
     AERROR << "the space type is not IMAGE.";
     return false;
@@ -174,7 +176,8 @@ bool LaneFrame::Init(const vector<ConnectedComponentPtr>& input_cc,
         marker.shape_type = MarkerShapeType::LINE_SEGMENT;
         marker.space_type = opts_.space_type;
 
-        marker.pos = cc_ptr->GetVertex(edge_ptr->end_vertex_id);
+        marker.pos = cc_ptr->GetVertex(edge_ptr->end_vertex_id,
+          scale, start_y_pos);
         marker.image_pos = marker.pos;
         if (opts_.use_non_mask &&
             non_mask->IsInsideMask(marker.image_pos)) {
@@ -186,7 +189,8 @@ bool LaneFrame::Init(const vector<ConnectedComponentPtr>& input_cc,
         marker.vis_pos = cv::Point(static_cast<int>(marker.pos.x()),
                                    static_cast<int>(marker.pos.y()));
 
-        marker.start_pos = cc_ptr->GetVertex(edge_ptr->start_vertex_id);
+        marker.start_pos = cc_ptr->GetVertex(edge_ptr->start_vertex_id,
+          scale, start_y_pos);
         marker.image_start_pos = marker.start_pos;
         if (opts_.use_non_mask &&
             non_mask->IsInsideMask(marker.image_start_pos)) {
@@ -296,7 +300,9 @@ bool LaneFrame::Init(const vector<ConnectedComponentPtr>& input_cc,
 bool LaneFrame::Init(const vector<ConnectedComponentPtr>& input_cc,
                      const shared_ptr<NonMask>& non_mask,
                      const shared_ptr<Projector<ScalarType>>& projector,
-                     const LaneFrameOptions& options) {
+                     const LaneFrameOptions& options,
+                     const double scale,
+                     const int start_y_pos) {
   if (options.space_type != SpaceType::VEHICLE) {
     AERROR << "the space type is not VEHICLE.";
     return false;
@@ -318,8 +324,10 @@ bool LaneFrame::Init(const vector<ConnectedComponentPtr>& input_cc,
       int n = 0;
       for (int j = 0; j < static_cast<int>(inner_edges->size()); ++j) {
         const ConnectedComponent::Edge* edge_ptr = &(inner_edges->at(j));
-        Vector2D pos = cc_ptr->GetVertex(edge_ptr->end_vertex_id);
-        Vector2D start_pos = cc_ptr->GetVertex(edge_ptr->start_vertex_id);
+        Vector2D pos = cc_ptr->GetVertex(edge_ptr->end_vertex_id,
+          scale, start_y_pos);
+        Vector2D start_pos = cc_ptr->GetVertex(edge_ptr->start_vertex_id,
+          scale, start_y_pos);
 
         Marker marker;
         marker.shape_type = MarkerShapeType::LINE_SEGMENT;
@@ -589,9 +597,9 @@ bool LaneFrame::GreedyGroupConnectAssociation() {
   opts_.group_param.orientation_estimation_skip_marker_num =
       opts_.orientation_estimation_skip_marker_num;
 
-  AINFO << "max_group_prediction_marker_num = "
+  ADEBUG << "max_group_prediction_marker_num = "
         << opts_.group_param.max_group_prediction_marker_num;
-  AINFO << "orientation_estimation_skip_marker_num = "
+  ADEBUG << "orientation_estimation_skip_marker_num = "
         << opts_.group_param.orientation_estimation_skip_marker_num;
 
   // generate marker groups based on CC heuristic
@@ -626,7 +634,7 @@ bool LaneFrame::GreedyGroupConnectAssociation() {
       groups[j].end_marker_idx[markers_[i].cc_edge_descend_id] = i;
     }
   }
-  AINFO << "number of marker groups = " << groups.size();
+  ADEBUG << "number of marker groups = " << groups.size();
 
   // compute the orientation of starting and end points for each group
   for (auto it_group = groups.begin(); it_group != groups.end(); ++it_group) {
@@ -943,7 +951,7 @@ bool LaneFrame::Process(LaneInstancesPtr instances) {
   // do marker association
   switch (opts_.assoc_param.method) {
     case AssociationMethod::GREEDY_GROUP_CONNECT: {
-      AINFO << "using greedy group connection algorithm "
+      ADEBUG << "using greedy group connection algorithm "
             << "for marker association ...";
       if (!GreedyGroupConnectAssociation()) {
         AERROR << "failed to do marker association.";
@@ -953,7 +961,7 @@ bool LaneFrame::Process(LaneInstancesPtr instances) {
     }
     default: { AERROR << "unknown marker association method."; }
   }
-  AINFO << "number of lane instance candidates = " << graphs_.size();
+  ADEBUG << "number of lane instance candidates = " << graphs_.size();
 
   // compute tight bounding box for graphs
   ComputeBbox();

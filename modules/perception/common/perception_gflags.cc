@@ -55,9 +55,7 @@ DEFINE_bool(enable_visualization, false, "enable visualization for debug");
 /// obstacle/perception.cc
 /* dag streaming config for Apollo 2.0 */
 DEFINE_string(dag_config_path, "./conf/dag_streaming.config",
-             "Onboard DAG Streaming config.");
-
-
+              "Onboard DAG Streaming config.");
 
 /// obstacle/onboard/radar_process_subnode.cc
 DEFINE_string(onboard_radar_detector, "DummyRadarDetector",
@@ -81,10 +79,10 @@ DEFINE_bool(image_file_debug, false, "Debug ROS to CV image");
 
 /// modules/perception/lib/config_manager/calibration_config_manager.cc
 DEFINE_string(front_camera_extrinsics_file,
-              "/data/params/front_camera_extrinsics.yaml",
+              "modules/perception/data/params/front_camera_extrinsics.yaml",
               "front_camera extrinsic file");
 DEFINE_string(front_camera_intrinsics_file,
-              "/data/params/front_camera_intrinsics.yaml",
+              "modules/perception/data/params/front_camera_intrinsics.yaml",
               "front_camera intrinsic file");
 
 /// obstacle/onboard/fusion_subnode.cc
@@ -138,3 +136,69 @@ DEFINE_bool(publish_fusion_event, false, "publish fusion event");
 DEFINE_bool(bag_mode, false, "run perception in bag mode");
 
 DEFINE_bool(show_motion, false, "visualize motion and object trajectories");
+DEFINE_bool(skip_camera_frame, false, "skip camera frame");
+DEFINE_int32(camera_hz, 30, "camera hz");
+DEFINE_string(fusion_publish_sensor_id, "velodyne_64", "fusion publish id");
+
+DEFINE_int32(pbf_fusion_assoc_distance_percent, 20, "fusion distance percent");
+DEFINE_double(pbf_distance_speed_cos_diff, 0.5, "fusion velocity cosine diff");
+
+DEFINE_string(cc_lane_post_processor_config_file,
+              "modules/perception/model/camera/lane_post_process_config.pb.txt",
+              "The config file of cc_lane_post_processor.");
+DEFINE_string(probabilistic_fusion_config_file,
+              "modules/perception/model/probabilistic_fusion_config.pb.txt",
+              "The config file of probabilistic_fusion.");
+DEFINE_string(yolo_config_filename, "config.pt", "Yolo config filename.");
+DEFINE_string(
+    yolo_camera_detector_config,
+    "modules/perception/model/camera/yolo_camera_detector_config.pb.txt",
+    "Yolo camera detector config filename.");
+DEFINE_string(modest_radar_detector_config,
+              "modules/perception/model/modest_radar_detector_config.pb.txt",
+              "modest radar detector config filename.");
+DEFINE_string(tracker_config, "modules/perception/model/tracker_config.pb.txt",
+              "tracker config filename.");
+DEFINE_string(sequence_type_fuser_config,
+              "modules/perception/model/sequence_type_fuser_config.pb.txt",
+              "sequence_type_fuser config filename.");
+DEFINE_string(async_fusion_config,
+              "modules/perception/model/async_fusion_config.pb.txt",
+              "async_fuser config filename.");
+DEFINE_string(
+    geometry_camera_converter_config,
+    "modules/perception/model/camera/geometry_camera_converter_config.pb.txt",
+    "geometry_camera_converter config filename.");
+DEFINE_string(cnn_segmentation_config,
+              "modules/perception/model/cnn_segmentation_config.pb.txt",
+              "cnn segmentation config filename.");
+DEFINE_string(hdmap_roi_filter_config,
+              "modules/perception/model/hdmap_roi_filter_config.pb.txt",
+              "hdmap ROI filter config filename.");
+DEFINE_string(low_object_filter_config,
+              "modules/perception/model/low_object_filter_config.pb.txt",
+              "low object filter config filename.");
+DEFINE_string(traffic_light_multi_camera_projection_config,
+              "modules/perception/model/traffic_light/"
+              "multi_camera_projection_config.pb.txt",
+              "traffic light multi camera projection config filename.");
+DEFINE_string(traffic_light_recognizer_config,
+              "modules/perception/model/traffic_light/"
+              "recognizer_config.pb.txt",
+              "traffic light recognizer config filename.");
+DEFINE_string(traffic_light_preprocessor_config,
+              "modules/perception/model/traffic_light/"
+              "preprocessor_config.pb.txt",
+              "traffic light preprocessor config filename.");
+DEFINE_string(traffic_light_rectifier_config,
+              "modules/perception/model/traffic_light/"
+              "rectifier_config.pb.txt",
+              "traffic light rectifier config filename.");
+DEFINE_string(traffic_light_reviser_config,
+              "modules/perception/model/traffic_light/"
+              "reviser_config.pb.txt",
+              "traffic light reviser config filename.");
+DEFINE_string(traffic_light_subnode_config,
+              "modules/perception/model/traffic_light/"
+              "subnode_config.pb.txt",
+              "traffic light subnode config filename.");

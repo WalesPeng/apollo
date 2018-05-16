@@ -68,9 +68,9 @@ struct LaneFrameOptions {
   ScalarType lane_interval_distance = 4.0;
 
   // for fitting curve
-  // minimum size of lane instance to
+  // minimum size of lane instance in meter to
   // be prefiltered
-  ScalarType min_instance_size_prefiltered = 3.0;
+  ScalarType min_instance_size_prefiltered = 0.5;
 
   // maximum size of instance to fit
   // a straight line
@@ -81,12 +81,16 @@ class LaneFrame {
  public:
   bool Init(const std::vector<ConnectedComponentPtr>& input_cc,
             const std::shared_ptr<NonMask>& non_mask,
-            const LaneFrameOptions& options);
+            const LaneFrameOptions& options,
+            const double scale,
+            const int start_y_pos);
 
   bool Init(const std::vector<ConnectedComponentPtr>& input_cc,
             const std::shared_ptr<NonMask>& non_mask,
             const std::shared_ptr<Projector<ScalarType>>& projector,
-            const LaneFrameOptions& options);
+            const LaneFrameOptions& options,
+            const double scale,
+            const int start_y_pos);
 
   void SetTransformer(const std::shared_ptr<Projector<ScalarType>>& projector) {
     projector_ = projector;
@@ -147,6 +151,8 @@ class LaneFrame {
   std::vector<Graph> graphs_;
   // tight bounding boxes of lane clusters
   std::vector<Bbox> boxes_;
+  double scale_;
+  double start_y_pos_;
 };
 
 }  // namespace perception

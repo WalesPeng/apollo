@@ -35,11 +35,12 @@
 namespace apollo {
 namespace planning {
 
+using apollo::common::math::lerp;
+using apollo::common::math::Box2d;
+using apollo::common::math::PathMatcher;
 using apollo::common::PathPoint;
 using apollo::common::TrajectoryPoint;
-using apollo::common::math::Box2d;
 using apollo::perception::PerceptionObstacle;
-using apollo::common::math::lerp;
 
 PathTimeGraph::PathTimeGraph(
     const std::vector<const Obstacle*>& obstacles,
@@ -294,7 +295,7 @@ std::vector<PathTimePoint> PathTimeGraph::GetObstacleSurroundingPoints(
 
   double time_gap = t1 - t0;
   CHECK(time_gap > -FLAGS_lattice_epsilon);
-  time_gap = std::abs(time_gap);
+  time_gap = std::fabs(time_gap);
 
   std::size_t num_sections = std::size_t(time_gap / t_min_density) + 1;
   double t_interval = time_gap / num_sections;

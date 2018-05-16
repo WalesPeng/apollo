@@ -33,6 +33,7 @@
 #include "modules/canbus/proto/chassis.pb.h"
 #include "modules/common/adapters/adapter_manager.h"
 #include "modules/common/log.h"
+#include "modules/common/time/timer.h"
 #include "modules/perception/common/perception_gflags.h"
 #include "modules/perception/lib/base/singleton.h"
 #include "modules/perception/lib/config_manager/calibration_config_manager.h"
@@ -81,8 +82,9 @@ class CameraProcessSubnode : public Subnode {
 
   bool MessageToMat(const sensor_msgs::Image& msg, cv::Mat* img);
 
-  void VisualObjToSensorObj(const std::vector<VisualObjectPtr>& objects,
-                            SharedDataPtr<SensorObjects>* sensor_objects);
+  void VisualObjToSensorObj(
+      const std::vector<std::shared_ptr<VisualObject>>& objects,
+      SharedDataPtr<SensorObjects>* sensor_objects);
 
   void PublishDataAndEvent(const double& timestamp,
                            const SharedDataPtr<SensorObjects>& sensor_objects,
@@ -109,7 +111,6 @@ class CameraProcessSubnode : public Subnode {
   int32_t image_width_ = 1920;
   Eigen::Matrix4d camera_to_car_;
   Eigen::Matrix<double, 3, 4> intrinsics_;
-  CameraUndistortionPtr undistortion_handler_;
 
   // Modules
   std::unique_ptr<BaseCameraDetector> detector_;

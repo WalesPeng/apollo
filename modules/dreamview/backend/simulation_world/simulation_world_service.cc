@@ -272,14 +272,16 @@ void SimulationWorldService::Update() {
   UpdateWithLatestObserved("PerceptionObstacles",
                            AdapterManager::GetPerceptionObstacles());
   UpdateWithLatestObserved("PerceptionTrafficLight",
-                           AdapterManager::GetTrafficLightDetection());
+                           AdapterManager::GetTrafficLightDetection(), false);
   UpdateWithLatestObserved("PredictionObstacles",
                            AdapterManager::GetPrediction());
   UpdateWithLatestObserved("Planning", AdapterManager::GetPlanning());
   UpdateWithLatestObserved("ControlCommand",
                            AdapterManager::GetControlCommand());
-  UpdateWithLatestObserved("Navigation", AdapterManager::GetNavigation());
-  UpdateWithLatestObserved("RelativeMap", AdapterManager::GetRelativeMap());
+  UpdateWithLatestObserved("Navigation", AdapterManager::GetNavigation(),
+                           FLAGS_use_navigation_mode);
+  UpdateWithLatestObserved("RelativeMap", AdapterManager::GetRelativeMap(),
+                           FLAGS_use_navigation_mode);
 
   for (const auto &kv : obj_map_) {
     *world_.add_object() = kv.second;
@@ -512,7 +514,11 @@ template <>
 void SimulationWorldService::UpdateSimulationWorld(
     const PerceptionObstacles &obstacles) {
   for (const auto &obstacle : obstacles.perception_obstacle()) {
-    CreateWorldObjectIfAbsent(obstacle);
+    auto &world_obj = CreateWorldObjectIfAbsent(obstacle);
+    if (obstacles.has_cipv_info() &&
+        (obstacles.cipv_info().cipv_id() == obstacle.id())) {
+      world_obj.set_type(Object_Type_CIPV);
+    }
   }
 
   if (obstacles.has_lane_marker()) {

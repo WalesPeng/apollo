@@ -132,13 +132,19 @@ void RelativeMap::RunOnce() {
   AdapterManager::Observe();
 
   MapMsg map_msg;
-  CreateMapFromNavigationLane(&map_msg);
+  {
+    std::lock_guard<std::mutex> lock(navigation_lane_mutex_);
+    CreateMapFromNavigationLane(&map_msg);
+  }
   Publish(&map_msg);
 }
 
 void RelativeMap::OnReceiveNavigationInfo(
     const NavigationInfo& navigation_info) {
-  navigation_lane_.UpdateNavigationInfo(navigation_info);
+  {
+    std::lock_guard<std::mutex> lock(navigation_lane_mutex_);
+    navigation_lane_.UpdateNavigationInfo(navigation_info);
+  }
 }
 
 bool RelativeMap::CreateMapFromNavigationLane(MapMsg* map_msg) {
@@ -164,8 +170,10 @@ bool RelativeMap::CreateMapFromNavigationLane(MapMsg* map_msg) {
 
   // update navigation_lane from perception_obstacles (lane marker)
   if (!AdapterManager::GetPerceptionObstacles()->Empty()) {
-    navigation_lane_.UpdatePerception(
-        AdapterManager::GetPerceptionObstacles()->GetLatestObserved());
+    const auto& perception =
+        AdapterManager::GetPerceptionObstacles()->GetLatestObserved();
+    navigation_lane_.UpdatePerception(perception);
+    map_msg->mutable_lane_marker()->CopyFrom(perception.lane_marker());
   }
 
   if (!navigation_lane_.GeneratePath()) {
