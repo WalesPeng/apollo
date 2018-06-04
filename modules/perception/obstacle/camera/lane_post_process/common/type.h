@@ -24,9 +24,9 @@
 #include "Eigen/Core"
 #include "opencv2/opencv.hpp"
 
-#include "modules/perception/proto/perception_obstacle.pb.h"
-
 #include "modules/common/log.h"
+#include "modules/perception/obstacle/camera/lane_post_process/common/base_type.h"
+#include "modules/perception/proto/perception_obstacle.pb.h"
 
 #ifndef MODULES_PERCEPTION_OBSTACLE_CAMERA_LANE_POST_PROCESS_COMMON_TYPE_H_
 #define MODULES_PERCEPTION_OBSTACLE_CAMERA_LANE_POST_PROCESS_COMMON_TYPE_H_
@@ -34,31 +34,31 @@
 namespace apollo {
 namespace perception {
 
-#ifndef UF_BLOCK_WIDTH
-#define UF_BLOCK_WIDTH 32
-#endif
-
-#ifndef UF_BLOCK_HEIGHT
-#define UF_BLOCK_HEIGHT 16
+#ifndef MAX_LANE_HISTORY
+#define MAX_LANE_HISTORY 10                        //最大历史帧数
 #endif
 
 #ifndef MAX_GROUP_PREDICTION_MARKER_NUM
-#define MAX_GROUP_PREDICTION_MARKER_NUM 10
+#define MAX_GROUP_PREDICTION_MARKER_NUM 10 				//
 #endif
 
 #ifndef MAX_POLY_ORDER
-#define MAX_POLY_ORDER 3
-#endif
+#define MAX_POLY_ORDER 3					//多项式次方数
 
 #ifndef MAX_LANE_SPATIAL_LABELS
-#define MAX_LANE_SPATIAL_LABELS 3
+#define MAX_LANE_SPATIAL_LABELS 3				//最大车道空间标签数
 #endif
 
 #ifndef MIN_BETWEEN_LANE_DISTANCE
-#define MIN_BETWEEN_LANE_DISTANCE 2.5
+#define MIN_BETWEEN_LANE_DISTANCE 2.5				//最小车道线距离
 #endif
 
-typedef float ScalarType;
+#ifndef AVEAGE_LANE_WIDTH_METER
+#define AVEAGE_LANE_WIDTH_METER 3.7				//一般车道宽（3.7米）
+#endif
+
+constexpr ScalarType INVERSE_AVEAGE_LANE_WIDTH_METER =
+    1.0 / AVEAGE_LANE_WIDTH_METER;
 
 #ifndef INF_NON_MASK_POINT_X
 #define INF_NON_MASK_POINT_X 10000
@@ -93,13 +93,13 @@ enum SpaceType {
 };
 
 typedef Eigen::Matrix<ScalarType, 2, 1> Vector2D;
-
+typedef Eigen::Matrix<ScalarType, 3, 1> Vector3D;
 enum AssociationMethod {
   GREEDY_GROUP_CONNECT = 0,
 };
 
 struct AssociationParam {
-  AssociationMethod method = AssociationMethod::GREEDY_GROUP_CONNECT;
+  AssociationMethod method = AssociationMethod::GREEDY_GROUP_CONNECT;           // 合并 marker用到的参数
   ScalarType min_distance = 0.0;
   ScalarType max_distance = 100.0;
   ScalarType distance_weight = 0.4;
@@ -166,11 +166,11 @@ enum SemanticLabelType {
 typedef Eigen::Matrix<ScalarType, MAX_POLY_ORDER + 1, 1> PolyModel;
 
 struct LaneInstance {
-  int graph_id;
-  ScalarType siz;
-  Bbox bounds;
-  PolyModel model;
-  ScalarType lateral_dist;
+  int graph_id;					// graph 的id号
+  ScalarType siz;				// graph 的外包围盒的最长边
+  Bbox bounds;				    // graph 的外包围盒
+  PolyModel model;              // graph 拟合的曲线模型
+  ScalarType lateral_dist;		// graph 的横向截距
 
   LaneInstance() : graph_id(-1), siz(0), lateral_dist(0) {
     for (int j = 0; j <= MAX_POLY_ORDER; ++j) {
@@ -200,7 +200,7 @@ struct LaneInstance {
   }
 };
 
-struct L3CubicCurve {
+struct CubicCurve {
   float x_start;
   float x_end;
   float a;
@@ -209,56 +209,47 @@ struct L3CubicCurve {
   float d;
 };
 
-struct L3LaneInfo {
-  int lane_id;
-  int left_idx;
-  int right_idx;
-  float lane_width;
-  int carleft_idx;
-  int carright_idx;
-};
-
 struct LaneObject {
   LaneObject() {
-    model.setZero();
-    pos.reserve(100);
-    orie.reserve(100);
-    image_pos.reserve(100);
-    confidence.reserve(100);
+    model.setZero();              // lane_object 拟合获得的3次曲线参数
+    pos.reserve(100);				// lane_object 内各 marker的起始点
+    orie.reserve(100);				// lane_object 内各 marker的方向向量
+    image_pos.reserve(100);			// lane_object 内各 marker的图像起始点
+    confidence.reserve(100);		// lane_object 内各 marker的置信度
   }
 
-  size_t point_num = 0;
+  size_t point_num = 0;            // 
   std::vector<Vector2D> pos;
   std::vector<Vector2D> orie;
   std::vector<Vector2D> image_pos;
   std::vector<ScalarType> confidence;
-  SpatialLabelType spatial = SpatialLabelType::L_0;
+  SpatialLabelType spatial = SpatialLabelType::L_0;              //车道线标签
   SemanticLabelType semantic = SemanticLabelType::UNKNOWN;
   bool is_compensated = false;
 
-  ScalarType longitude_start = std::numeric_limits<ScalarType>::max();
-  ScalarType longitude_end = -std::numeric_limits<ScalarType>::max();
+  ScalarType longitude_start = std::numeric_limits<ScalarType>::max();      // lane_object 的纵向起始点
+  ScalarType longitude_end = -std::numeric_limits<ScalarType>::max(); 		// lane_object 的纵向终点
   int order = 0;
   PolyModel model;
   ScalarType lateral_distance = 0.0;
 
-  L3CubicCurve pos_curve;
-  L3CubicCurve img_curve;
-  L3LaneInfo lane_info;
+  CubicCurve pos_curve;
+  CubicCurve img_curve;
+  // L3LaneInfo lane_info;
   double timestamp = 0.0;
   int32_t seq_num = 0;
 
   // @brief: write to LaneMarker protobuf message API
-  void ToLaneMarkerProto(LaneMarker* lane_marker) const {
+  void ToLaneMarkerProto(LaneMarker *lane_marker) const {
     // set a constant quality value 1.0 as temporary use
     lane_marker->set_quality(1.0);
     lane_marker->set_model_degree(MAX_POLY_ORDER);
-    lane_marker->set_c0_position(model(0));
-    lane_marker->set_c1_heading_angle(model(1));
-    lane_marker->set_c2_curvature(model(2));
-    lane_marker->set_c3_curvature_derivative(model(3));
-    lane_marker->set_view_range(std::max(longitude_end,
-                                         static_cast<ScalarType>(0)));
+    lane_marker->set_c0_position(model(0));        			//第1个系数为 位置信息，即函数的y轴截距
+    lane_marker->set_c1_heading_angle(model(1));   			//第2个系数为 角度信息，2和3影响函数的弯曲走向
+    lane_marker->set_c2_curvature(model(2));   				//第3个系数为 曲率信息
+    lane_marker->set_c3_curvature_derivative(model(3));   			//第4个系数为 曲率导数信息，其正负决定函数是先增后再增，还是先减后增再减
+    lane_marker->set_view_range(
+        std::max(longitude_end, static_cast<ScalarType>(0)));
     lane_marker->set_longitude_start(longitude_start);
     lane_marker->set_longitude_end(longitude_end);
   }
@@ -284,21 +275,6 @@ struct LaneObject {
   }
 };
 
-// struct for L3 Lane information
-struct L3LaneLine {
-  SpatialLabelType spatial;
-  SemanticLabelType semantic;
-  L3CubicCurve pos_curve;
-  L3CubicCurve img_curve;
-};
-
-struct RoadInfo {
-  double timestamp = 0.0;
-  int32_t seq_num = 0;
-  std::vector<L3LaneLine> lane_line_vec;
-  std::vector<L3LaneInfo> lane_vec;
-};
-
 typedef std::vector<LaneObject> LaneObjects;
 typedef std::shared_ptr<LaneObjects> LaneObjectsPtr;
 typedef const std::shared_ptr<LaneObjects> LaneObjectsConstPtr;
@@ -307,8 +283,8 @@ typedef std::vector<LaneInstance> LaneInstances;
 typedef std::shared_ptr<LaneInstances> LaneInstancesPtr;
 typedef const std::shared_ptr<LaneInstances> LaneInstancesConstPtr;
 
-void LaneObjectsToLaneMarkerProto(const LaneObjects& lane_objects,
-                                  LaneMarkers* lane_markers);
+void LaneObjectsToLaneMarkerProto(const LaneObjects &lane_objects,
+                                  LaneMarkers *lane_markers);
 }  // namespace perception
 }  // namespace apollo
 

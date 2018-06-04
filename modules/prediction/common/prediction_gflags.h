@@ -82,8 +82,10 @@ DECLARE_double(rnn_min_lane_relatice_s);
 DECLARE_bool(adjust_velocity_by_obstacle_heading);
 DECLARE_bool(adjust_velocity_by_position_shift);
 DECLARE_double(heading_filter_param);
+DECLARE_uint32(max_num_lane_point);
 
-// Cost evaluator
+// Validation checker
+DECLARE_double(centripetal_acc_coeff);
 
 // Obstacle trajectory
 DECLARE_double(lane_sequence_threshold);
@@ -102,6 +104,10 @@ DECLARE_double(time_upper_bound_to_lane_center);
 DECLARE_double(time_lower_bound_to_lane_center);
 DECLARE_double(sample_time_gap);
 DECLARE_double(cost_alpha);
-DECLARE_double(default_time_to_lane_center);
+DECLARE_double(default_time_to_lat_end_state);
+DECLARE_double(turning_curvature_lower_bound);
+DECLARE_double(turning_curvature_upper_bound);
+DECLARE_double(speed_at_lower_curvature);
+DECLARE_double(speed_at_upper_curvature);
 
 #endif  // MODULES_PREDICTION_COMMON_PREDICTION_GFLAGS_H_

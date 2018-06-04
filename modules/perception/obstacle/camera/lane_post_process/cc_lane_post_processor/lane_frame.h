@@ -45,19 +45,19 @@ struct LaneFrameOptions {
   SpaceType space_type = SpaceType::IMAGE;  // space type
   cv::Rect image_roi;
   bool use_cc = true;
-  int min_cc_pixel_num = 10;  // minimum number of pixels of CC
-  int min_cc_size = 5;        // minimum size of CC
+  int min_cc_pixel_num = 10;  // minimum number of pixels of CC    PMH ：连通域最小像素个数
+  int min_cc_size = 5;        // minimum size of CC                连通域最小尺寸
 
-  bool use_non_mask = false;  // indicating whether use non_mask or not
+  bool use_non_mask = false;  // indicating whether use non_mask or not      是否使用 non_mask？      
 
-  // used for greedy search association method
+  // used for greedy search association method                    贪婪搜索关联方法相关参数
   // maximum number of markers used for matching for each CC
-  int max_cc_marker_match_num = 1;
+  int max_cc_marker_match_num = 1;                  //用于匹配每个CC的最大 markers 数
 
   // used for marker association
   // minimum longitudinal offset used for
   // search upper markers
-  ScalarType min_y_search_offset = 0.0;
+  ScalarType min_y_search_offset = 0.0;             // PMH：y方向最小纵向搜索范围
 
   AssociationParam assoc_param;
   GroupParam group_param;
@@ -65,31 +65,35 @@ struct LaneFrameOptions {
 
   // for determining lane object label
   // predefined label interval distance
-  ScalarType lane_interval_distance = 4.0;
+  ScalarType lane_interval_distance = 4.0;       	// PMH：车道间隔距离 = 4m
 
   // for fitting curve
-  // minimum size of lane instance to
+  // minimum size of lane instance in meter to
   // be prefiltered
-  ScalarType min_instance_size_prefiltered = 3.0;
+  ScalarType min_instance_size_prefiltered = 0.5;          // PMH：拟合得到曲线的最小长度大于0.5米
 
   // maximum size of instance to fit
   // a straight line
-  ScalarType max_size_to_fit_straight_line = 4.0;
+  ScalarType max_size_to_fit_straight_line = 4.0;         // PMH：拟合直线的最大长度
 };
 
 class LaneFrame {
  public:
   bool Init(const std::vector<ConnectedComponentPtr>& input_cc,
             const std::shared_ptr<NonMask>& non_mask,
-            const LaneFrameOptions& options);
+            const LaneFrameOptions& options,
+            const double scale,
+            const int start_y_pos);
 
   bool Init(const std::vector<ConnectedComponentPtr>& input_cc,
             const std::shared_ptr<NonMask>& non_mask,
             const std::shared_ptr<Projector<ScalarType>>& projector,
-            const LaneFrameOptions& options);
+            const LaneFrameOptions& options,
+            const double scale,
+            const int start_y_pos);
 
   void SetTransformer(const std::shared_ptr<Projector<ScalarType>>& projector) {
-    projector_ = projector;
+    projector_ = projector;												// PMH：
     is_projector_init_ = true;
   }
 
@@ -107,13 +111,13 @@ class LaneFrame {
 
   Bbox bbox(int i) const { return boxes_.at(i); }
 
-  bool FitPolyCurve(const int& graph_id, const ScalarType& graph_siz,
+  bool FitPolyCurve(const int& graph_id, const ScalarType& graph_siz,             // PMH：根据graph计算多项式曲线系数和横向距离。
                     PolyModel* poly_coef, ScalarType* lateral_distance) const;
 
  protected:
-  ScalarType ComputeMarkerPairDistance(const Marker& ref, const Marker& tar);
+  ScalarType ComputeMarkerPairDistance(const Marker& ref, const Marker& tar);          // PMH：计算Marker对的距离
 
-  std::vector<int> ComputeMarkerEdges(
+  std::vector<int> ComputeMarkerEdges(                           // PMH：计算Marker边缘
       std::vector<std::unordered_map<int, ScalarType>>* edges);
 
   bool GreedyGroupConnectAssociation();
@@ -144,9 +148,11 @@ class LaneFrame {
   bool is_projector_init_ = false;
 
   // lane marker clusters
-  std::vector<Graph> graphs_;
+  std::vector<Graph> graphs_;       // 相邻marker_id号构成marker二元组
   // tight bounding boxes of lane clusters
-  std::vector<Bbox> boxes_;
+  std::vector<Bbox> boxes_;      // 每个graph的水平包围盒。
+  double scale_;
+  double start_y_pos_;
 };
 
 }  // namespace perception

@@ -41,10 +41,6 @@ DECLARE_double(reference_line_lateral_buffer);
 DECLARE_double(prepare_rerouting_time);
 
 DECLARE_bool(enable_smooth_reference_line);
-DECLARE_double(spiral_smoother_max_deviation);
-DECLARE_int32(spiral_smoother_num_iteration);
-DECLARE_double(spiral_smoother_piecewise_length);
-DECLARE_double(spiral_reference_line_resolution);
 
 DECLARE_bool(prioritize_change_lane);
 DECLARE_bool(reckless_change_lane);
@@ -163,9 +159,13 @@ DECLARE_double(decision_horizon);
 DECLARE_uint32(num_velocity_sample);
 DECLARE_bool(enable_backup_trajectory);
 DECLARE_double(backup_trajectory_cost);
+DECLARE_double(min_velocity_sample_gap);
+DECLARE_double(lon_collision_buffer);
+DECLARE_double(lat_collision_buffer);
+DECLARE_uint32(num_sample_follow_per_timestamp);
 
 // Lattice Evaluate Parameters
-DECLARE_double(weight_lon_travel);
+DECLARE_double(weight_lon_objective);
 DECLARE_double(weight_lon_jerk);
 DECLARE_double(weight_lon_collision);
 DECLARE_double(weight_lat_offset);

@@ -288,8 +288,9 @@ int StopSign::ProcessStopStatus(ReferenceLineInfo* const reference_line_info,
       auto* path_overlap =
           reference_line_info->reference_line().map_path().NextLaneOverlap(
               reference_line_info->AdcSlBoundary().end_s());
-      if (path_overlap->start_s - reference_line_info->AdcSlBoundary().end_s() >
-          kDeltaS) {
+      if (path_overlap != nullptr &&
+          path_overlap->start_s - reference_line_info->AdcSlBoundary().end_s() >
+              kDeltaS) {
         // keep in CREEPING status
       } else {
         bool all_far_away = true;
@@ -327,7 +328,7 @@ bool StopSign::CheckADCkStop(ReferenceLineInfo* const reference_line_info) {
   CHECK_NOTNULL(reference_line_info);
 
   double adc_speed = reference_line_info->AdcPlanningPoint().v();
-  if (adc_speed > FLAGS_max_stop_speed) {
+  if (adc_speed > config_.stop_sign().max_stop_speed()) {
     ADEBUG << "ADC not stopped: speed[" << adc_speed << "]";
     return false;
   }

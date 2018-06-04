@@ -14,12 +14,12 @@
  * limitations under the License.
  *****************************************************************************/
 
+#include "modules/perception/obstacle/camera/lane_post_process/common/connected_component.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <utility>
-
-#include "modules/perception/obstacle/camera/lane_post_process/common/connected_component.h"
 
 namespace apollo {
 namespace perception {
@@ -122,8 +122,9 @@ ConnectedComponent::BoundingBoxSplitType ConnectedComponent::DetermineSplit(
   int height = bbox_.y_max - bbox_.y_min + 1;
   int width = bbox_.x_max - bbox_.x_min + 1;
   ScalarType diag_len = sqrt(static_cast<ScalarType>(height * width));
-  if (diag_len >= split_siz) {
-    bbox_.split = (height < 5) ? BoundingBoxSplitType::HORIZONTAL
+  if (diag_len >= split_siz) {                                       //PMH：如果对角线长度小于设定值 split_siz则不分割。
+																	 //		如果高度小于5，包围盒分割类型为水平方向，否者为竖直方向。
+	bbox_.split = (height < 5) ? BoundingBoxSplitType::HORIZONTAL
                                : BoundingBoxSplitType::VERTICAL;
   } else {
     bbox_.split = BoundingBoxSplitType::NONE;
@@ -137,37 +138,37 @@ void ConnectedComponent::FindContourForSplit() {
   }
 
   // initialize contours
-  if (bbox_.split == BoundingBoxSplitType::VERTICAL) {
-    bbox_.left_contour.reset(
+  if (bbox_.split == BoundingBoxSplitType::VERTICAL) {         
+    bbox_.left_contour.reset(							//PMH：bbox左轮廓初始化为：数量为bbox高度，值为bbox的最大x值的一系列点
         new std::vector<int>(bbox_.y_max - bbox_.y_min + 1, bbox_.x_max));
-    bbox_.right_contour.reset(
+    bbox_.right_contour.reset(							//PMH：bbox右轮廓初始化为 （bbox高度，bbox的最小x值）
         new std::vector<int>(bbox_.y_max - bbox_.y_min + 1, bbox_.x_min));
   } else if (bbox_.split == BoundingBoxSplitType::HORIZONTAL) {
-    bbox_.up_contour.reset(
+    bbox_.up_contour.reset(								//PMH：bbox上轮廓初始化为 （bbox宽度，bbox的最大y值）
         new std::vector<int>(bbox_.x_max - bbox_.x_min + 1, bbox_.y_max));
-    bbox_.down_contour.reset(
+    bbox_.down_contour.reset(							//PMH：bbox下轮廓初始化为 （bbox宽度，bbox的最小y值）
         new std::vector<int>(bbox_.x_max - bbox_.x_min + 1, bbox_.y_min));
   }
 
   // find contour pixels
   for (int i = 0; i < pixel_count_; ++i) {
     // get contour pixels if need splitting
-    if (bbox_.split == BoundingBoxSplitType::VERTICAL) {
-      int y = pixels_->at(i).y - bbox_.y_min;
-      bbox_.left_contour->at(y) =
+    if (bbox_.split == BoundingBoxSplitType::VERTICAL) {	//PMH：如果为竖直分割，y = 像素点i在y方向到bbox上边界的差值
+      int y = pixels_->at(i).y - bbox_.y_min;            
+      bbox_.left_contour->at(y) =                        //    bbox左轮廓的y = 像素i的 x最小值
           min(bbox_.left_contour->at(y), pixels_->at(i).x);
-      bbox_.right_contour->at(y) =
+      bbox_.right_contour->at(y) =                        //    bbox右轮廓的y = 像素i的 x最大值
           max(bbox_.right_contour->at(y), pixels_->at(i).x);
-    } else if (bbox_.split == BoundingBoxSplitType::HORIZONTAL) {
+    } else if (bbox_.split == BoundingBoxSplitType::HORIZONTAL) { //PMH：如果为水平分割，x = 像素点i在x方向到bbox左边界的差值
       int x = pixels_->at(i).x - bbox_.x_min;
-      bbox_.up_contour->at(x) = min(bbox_.up_contour->at(x), pixels_->at(i).y);
+      bbox_.up_contour->at(x) = min(bbox_.up_contour->at(x), pixels_->at(i).y);      //    bbox上轮廓的x = min（遍历像素i取其 y最小值）
       bbox_.down_contour->at(x) =
-          max(bbox_.down_contour->at(x), pixels_->at(i).y);
+          max(bbox_.down_contour->at(x), pixels_->at(i).y);							//    bbox下轮廓的x = man（遍历像素i取其 y最大值）
     }
   }
 }
 
-void ConnectedComponent::FindVertices() {
+void ConnectedComponent::FindVertices() {          //PMH：找顶点
   unordered_set<int> left_boundary;
   unordered_set<int> up_boundary;
   unordered_set<int> right_boundary;
@@ -195,7 +196,7 @@ void ConnectedComponent::FindVertices() {
     const cv::Point2i* p = &(pixels_->at(*it));
     if (p->x == x_min() && p->y == y_max()) {
       // bottom-left corner
-      if (down_boundary.find(p->x + 1) == down_boundary.end() ||
+      if (down_boundary.find(p->x + 1) == down_boundary.end() ||         //PMH：左下角点x方向+1像素或Y方向-1像素都会超出边界，说明的确是左下角顶点
           left_boundary.find(p->y - 1) == left_boundary.end()) {
         vertices_->push_back(Vertex(p->x, p->y));
       }
@@ -244,29 +245,29 @@ void ConnectedComponent::FindVertices() {
           vertices_->push_back(Vertex(p->x, p->y));
         }
       } else {
-        AERROR << "the point "
-               << "(" << p->x << ", " << p->y << ")"
-               << " is not on bounding box.";
+        std::cerr << "the point "
+                  << "(" << p->x << ", " << p->y << ")"
+                  << " is not on bounding box." << std::endl;
       }
     }
   }
 }
 
-ConnectedComponent::Edge ConnectedComponent::MakeEdge(int i, int j) {
+ConnectedComponent::Edge ConnectedComponent::MakeEdge(int i, int j) {        
   ConnectedComponent::Edge edge;
   edge.start_vertex_id = i;
   edge.end_vertex_id = j;
-  const Vertex& start_vertex = vertices_->at(i);
-  const Vertex& end_vertex = vertices_->at(j);
-  edge.vec(0) = end_vertex(0) - start_vertex(0);
-  edge.vec(1) = end_vertex(1) - start_vertex(1);
-  edge.len = edge.vec.norm();
-  edge.orie = atan2(edge.vec(1), edge.vec(0));
-  return edge;
+  const Vertex& start_vertex = vertices_->at(i);	     		//边缘的起点坐标
+  const Vertex& end_vertex = vertices_->at(j); 					//边缘的终点坐标
+  edge.vec(0) = end_vertex(0) - start_vertex(0);              //边缘的x方向分量长度
+  edge.vec(1) = end_vertex(1) - start_vertex(1);              //边缘的y方向分量长度
+  edge.len = edge.vec.norm();								  //边缘长度
+  edge.orie = atan2(edge.vec(1), edge.vec(0));               //边缘的角度方向
+  return edge;                                
 }
 
 void ConnectedComponent::FindEdges() {
-  if (GetVertexCount() <= 1) {
+  if (GetVertexCount() <= 1) {               //PMH：返回顶点个数，如果小于等于1则直接跳出
     return;
   }
 
@@ -277,18 +278,18 @@ void ConnectedComponent::FindEdges() {
   for (int i = 0; i < GetVertexCount(); ++i) {
     for (int j = i + 1; j < GetVertexCount(); ++j) {
       if (vertices_->at(i)(1) >= vertices_->at(j)(1)) {
-        edges_->push_back(MakeEdge(i, j));
+        edges_->push_back(MakeEdge(i, j));           			//PMH：从上到下，i大则i->j，  j大则j->i
       } else {
         edges_->push_back(MakeEdge(j, i));
       }
       if (edges_->back().len > max_len) {
-        max_len = edges_->back().len;
-        max_len_edge_id_ = static_cast<int>(edges_->size()) - 1;
+        max_len = edges_->back().len;                          //PMH：记录最大长度边缘
+        max_len_edge_id_ = static_cast<int>(edges_->size()) - 1;           //PMH：记录最大长度边缘的 id
       }
     }
   }
 
-  // initialize clockwise and anticlockwise edges
+  // initialize clockwise and anticlockwise edges         正、逆时针全部初始化为最长的边缘
   const Edge& max_len_edge = edges_->at(max_len_edge_id_);
 
   clockwise_edge_->start_vertex_id = max_len_edge.start_vertex_id;
@@ -303,42 +304,42 @@ void ConnectedComponent::FindEdges() {
   anticlockwise_edge_->orie = max_len_edge.orie;
   anticlockwise_edge_->vec = max_len_edge.vec;
 
-  // find the clockwise and anticlockwise edges
+  // find the clockwise and anticlockwise edges             找正时针、逆时针边缘
   Vertex q;
   Displacement new_vec;
   ScalarType cross;
-  for (int i = 0; i < GetVertexCount(); ++i) {
-    const Vertex& p = vertices_->at(i);
+  for (int i = 0; i < GetVertexCount(); ++i) {             //PMH：遍历顶点
+    const Vertex& p = vertices_->at(i);      
 
     // search the clockwise edge
-    q = vertices_->at(clockwise_edge_->start_vertex_id);
+    q = vertices_->at(clockwise_edge_->start_vertex_id);     //PMH：顶点为p，最长边缘起点为q，new_vec为p-q构成的新向量
     new_vec = p - q;
-    cross = clockwise_edge_->vec(0) * new_vec(1) -
+    cross = clockwise_edge_->vec(0) * new_vec(1) -           //PMH：cross = 长边缘起点x分量长度*（Py-Qy）-（Px-Qx）*长边缘起点y分量长度
             new_vec(0) * clockwise_edge_->vec(1);
-    if (cross > kEpsCross) {
+    if (cross > kEpsCross) {                //PMH：kEpsCross = 0.001
       if (clockwise_edge_->vec(0) >= 0) {
-        // from left to right
+        // from left to right          如果x分量大于等于0，说明边缘是从左到右
         if (p(0) == static_cast<ScalarType>(x_max()) ||
-            p(1) == static_cast<ScalarType>(y_min())) {
+            p(1) == static_cast<ScalarType>(y_min())) {      //PMH：顺时针，如果p顶点位于右边界或上边界，则设其为顺时针边缘的终点，  反之设其为起点。
           clockwise_edge_->end_vertex_id = i;
         } else {
           clockwise_edge_->start_vertex_id = i;
         }
       } else {
-        // from right to left
+        // from right to left          如果x分量小于0，说明边缘是从右到左
         if (p(0) == static_cast<ScalarType>(x_min()) ||
-            p(1) == static_cast<ScalarType>(y_min())) {
+            p(1) == static_cast<ScalarType>(y_min())) {      //PMH:如果p顶点位于左边界或上边界，则设其为顺时针边缘的终点，  反之设其为起点。
           clockwise_edge_->end_vertex_id = i;
         } else {
           clockwise_edge_->start_vertex_id = i;
         }
       }
-      const Vertex& new_start_vertex =
+      const Vertex& new_start_vertex =                      //PMH：新起始点和终点
           vertices_->at(clockwise_edge_->start_vertex_id);
       const Vertex& new_end_vertex =
           vertices_->at(clockwise_edge_->end_vertex_id);
-      clockwise_edge_->vec(0) = new_end_vertex(0) - new_start_vertex(0);
-      clockwise_edge_->vec(1) = new_end_vertex(1) - new_start_vertex(1);
+      clockwise_edge_->vec(0) = new_end_vertex(0) - new_start_vertex(0);        //PMH：顺时针x分量 = 新终点与起动的x分量差
+      clockwise_edge_->vec(1) = new_end_vertex(1) - new_start_vertex(1);		//PMH：顺时针y分量 = 新终点与起动的y分量差
     }
 
     // search the anticlockwise edge
@@ -348,16 +349,16 @@ void ConnectedComponent::FindEdges() {
             new_vec(0) * anticlockwise_edge_->vec(1);
     if (cross < -kEpsCross) {
       if (anticlockwise_edge_->vec(0) <= 0) {
-        // from right to left
-        if (p(0) == static_cast<ScalarType>(x_min()) ||
+        // from right to left          如果x分量小于等于0，说明边缘是从右到左
+        if (p(0) == static_cast<ScalarType>(x_min()) ||			//PMH：逆时针，如果p顶点位于左边界或上边界，则设其为顺时针边缘的终点，  反之设其为起点。
             p(1) == static_cast<ScalarType>(y_min())) {
           anticlockwise_edge_->end_vertex_id = i;
         } else {
           anticlockwise_edge_->start_vertex_id = i;
         }
       } else {
-        // from left to right
-        if (p(0) == static_cast<ScalarType>(x_max()) ||
+        // from left to right          如果x分量大于0，说明边缘是从左到右
+        if (p(0) == static_cast<ScalarType>(x_max()) ||			//PMH：逆时针，如果p顶点位于右边界或上边界，则设其为顺时针边缘的终点，  反之设其为起点。
             p(1) == static_cast<ScalarType>(y_min())) {
           anticlockwise_edge_->end_vertex_id = i;
         } else {
@@ -368,7 +369,7 @@ void ConnectedComponent::FindEdges() {
           vertices_->at(anticlockwise_edge_->start_vertex_id);
       const Vertex& new_end_vertex =
           vertices_->at(anticlockwise_edge_->end_vertex_id);
-      anticlockwise_edge_->vec(0) = new_end_vertex(0) - new_start_vertex(0);
+      anticlockwise_edge_->vec(0) = new_end_vertex(0) - new_start_vertex(0);         //PMH；更新逆时针边缘
       anticlockwise_edge_->vec(1) = new_end_vertex(1) - new_start_vertex(1);
     }
   }
@@ -397,11 +398,11 @@ void ConnectedComponent::FindEdges() {
   anticlockwise_edges_->back().orie = anticlockwise_edge_->orie;
   anticlockwise_edges_->back().len = anticlockwise_edge_->len;
 
-  if (max_len_edge.vec(0) >= 0) {
+  if (max_len_edge.vec(0) >= 0) {              //PMH：如果最长边缘x方向分量大于等于0，说明方向为从左到右，顺时针边缘则为内部边缘
     // direction from left to right
     inner_edge_ = clockwise_edge_;
     inner_edges_ = clockwise_edges_;
-  } else {
+  } else {										//PMH：如果最长边缘x方向分量小于0，说明方向为从右到左，逆时针边缘则为内部边缘
     // direction from right to left
     inner_edge_ = anticlockwise_edge_;
     inner_edges_ = anticlockwise_edges_;
@@ -425,7 +426,7 @@ void ConnectedComponent::SplitContourVertical(int start_vertex_id,
     (is_clockwise ? clockwise_edges_ : anticlockwise_edges_)
         ->push_back(
             MakeEdge(start_vertex_id, static_cast<int>(vertices_->size()) - 1));
-    start_pos = end_pos - 1;
+    start_pos = end_pos - 1;           // update start—pos
     x = is_clockwise ? bbox_.right_contour->at(start_pos - this->y_min())
                      : bbox_.left_contour->at(start_pos - this->y_min());
     vertices_->push_back(Vertex(x, start_pos));
@@ -584,7 +585,6 @@ void ConnectedComponent::SplitContourHorizontal(int len_split,
   }
 }
 
-// version 2
 void ConnectedComponent::SplitContour(int split_len) {
   if (bbox_.split == BoundingBoxSplitType::NONE) {
     return;
@@ -602,9 +602,9 @@ void ConnectedComponent::SplitContour(int split_len) {
   } else if (bbox_.split == BoundingBoxSplitType::HORIZONTAL) {
     // split clockwise contour
     if (vertices_->at(clockwise_edge_->start_vertex_id)(0) <=
-        vertices_->at(clockwise_edge_->end_vertex_id)(0)) {
+        vertices_->at(clockwise_edge_->end_vertex_id)(0)) {       //PMH：顺时针边缘为从左到右，从左到右分割；反之亦然
       SplitContourHorizontal(split_len, true, x_min(), x_max());
-    } else {
+    } else {													  //PMH：？？有这种情况？顺时针从右到左？
       SplitContourHorizontal(split_len, true, x_max(), x_min());
     }
     // split anticlockwise contour
@@ -616,7 +616,8 @@ void ConnectedComponent::SplitContour(int split_len) {
     }
 
   } else {
-    AERROR << "unknown bounding box split type: " << bbox_.split;
+    std::cerr << "unknown bounding box split type: "
+              << bbox_.split << std::endl;
   }
 }
 
@@ -631,13 +632,14 @@ void ConnectedComponent::Process(ScalarType split_siz, int split_len) {
   }
 }
 
-/** split a CC into several smaller ones **/
 vector<int> ConnectedComponent::GetSplitRanges(int siz, int len_split) {
   if (siz <= 0) {
-    AERROR << "siz should be a positive number: " << siz;
+    std::cerr << "siz should be a positive number: "
+              << siz << std::endl;
   }
   if (len_split <= 0) {
-    AERROR << "len_split should be a positive number: " << len_split;
+    std::cerr << "len_split should be a positive number: "
+              << len_split << std::endl;
   }
 
   int num_split = siz / len_split;
@@ -654,7 +656,7 @@ vector<int> ConnectedComponent::GetSplitRanges(int siz, int len_split) {
   return lens;
 }
 
-/* connected component generator */
+/** connected component generator **/
 ConnectedComponentGenerator::ConnectedComponentGenerator(int image_width,
                                                          int image_height)
     : image_width_(image_width),
@@ -667,19 +669,8 @@ ConnectedComponentGenerator::ConnectedComponentGenerator(int image_width,
       roi_y_max_(image_height - 1) {
   total_pix_ =
       static_cast<size_t>(image_width_) * static_cast<size_t>(image_height_);
-#if CUDA_CC
-  cudaChannelFormatDesc uchar_desc = cudaCreateChannelDesc<unsigned char>();
-  cudaMallocArray(&img_array_, &uchar_desc, static_cast<size_t>(width_),
-                  static_cast<size_t>(height_));
-  cudaBindTextureToArray(img_tex, img_array_, uchar_desc);
-  cudaMalloc(
-      reinterpret_cast<void**>(&label_array_),
-      static_cast<size_t>(width_) * static_cast<size_t>(height_) * sizeof(int));
-  labels_ = static_cast<int*>(malloc(total_pix_ * sizeof(int)));
-#else
   labels_.Init(total_pix_);
   frame_label_.resize(total_pix_, -1);
-#endif
   root_map_.reserve(total_pix_);
 }
 
@@ -695,67 +686,48 @@ ConnectedComponentGenerator::ConnectedComponentGenerator(int image_width,
       roi_x_max_(roi.x + roi.width - 1),
       roi_y_max_(roi.y + roi.height - 1) {
   if (roi_x_min_ < 0) {
-    AERROR << "x_min is less than zero: " << roi_x_min_;
+    std::cerr << "x_min is less than zero: " << roi_x_min_ << std::endl;
   }
   if (roi_y_min_ < 0) {
-    AERROR << "y_min is less than zero: " << roi_y_min_;
+    std::cerr << "y_min is less than zero: " << roi_y_min_ << std::endl;
   }
   if (roi_x_max_ >= image_width_) {
-    AERROR << "x_max is larger than image width: " << roi_x_max_ << "|"
-           << image_width_;
+    std::cerr << "x_max is larger than image width: " << roi_x_max_ << "|"
+              << image_width_ << std::endl;
   }
   if (roi_y_max_ >= image_height_) {
-    AERROR << "y_max is larger than image height: " << roi_y_max_ << "|"
-           << image_height_;
+    std::cerr << "y_max is larger than image height: " << roi_y_max_ << "|"
+              << image_height_ << std::endl;
   }
   total_pix_ = static_cast<size_t>(width_) * static_cast<size_t>(height_);
-#if _CUDA_CC
-  cudaChannelFormatDesc uchar_desc = cudaCreateChannelDesc<unsigned char>();
-  img_array_ = NULL;
-  cudaMallocArray(&img_array_, &uchar_desc, static_cast<size_t>(width_),
-                  static_cast<size_t>(height_));
-  cudaBindTextureToArray(img_tex, img_array_, uchar_desc);
-
-  cudaMalloc(
-      reinterpret_cast<void**>(&label_array_),
-      static_cast<size_t>(width_) * static_cast<size_t>(height_) * sizeof(int));
-
-  cudaError_t cuda_err = cudaGetLastError();
-  if (cuda_err != cudaSuccess) {
-    AERROR << "failed to initialize 'img_array' and 'label_array' with CUDA: "
-           << cudaGetErrorString(cuda_err);
-  }
-
-  labels_ = static_cast<int*>(malloc(total_pix_ * sizeof(int)));
-#else
   labels_.Init(total_pix_);
   frame_label_.resize(total_pix_, -1);
-#endif
   root_map_.reserve(total_pix_);
 }
 
 bool ConnectedComponentGenerator::FindConnectedComponents(
     const cv::Mat& lane_map, vector<shared_ptr<ConnectedComponent>>* cc) {
   if (lane_map.empty()) {
-    AERROR << "input lane map is empty";
+    std::cerr << "input lane map is empty" << std::endl;
     return false;
   }
   if (lane_map.type() != CV_8UC1) {
-    AERROR << "input lane map type is not CV_8UC1";
+    std::cerr << "input lane map type is not CV_8UC1" << std::endl;
     return false;
   }
 
   if (lane_map.cols != image_width_) {
-    AERROR << "The width of input lane map does not match";
+    std::cerr << "The width of input lane map does not match" << std::endl;
     return false;
   }
   if (lane_map.rows != image_height_) {
-    AERROR << "The height of input lane map does not match";
+    std::cerr << "The height of input lane map does not match" << std::endl;
     return false;
   }
 
   if (cc == NULL) {
-    AERROR << "the pointer of output connected components is null.";
+    std::cerr << "the pointer of output connected components is null."
+              << std::endl;
     return false;
   }
 
@@ -781,32 +753,32 @@ bool ConnectedComponentGenerator::FindConnectedComponents(
       left_idx = cur_idx - 1;
       up_idx = cur_idx - image_width_;
 
-      if (x == roi_x_min_) {
+      if (x == roi_x_min_) { 			//PMH：如果为roi左边界则 left_val = 0,否则为当前像素点的值
         left_val = 0;
       } else {
         left_val = cur_p[x - 1];
       }
 
-      if (y == roi_y_min_) {
+      if (y == roi_y_min_) {			//PMH：如果为roi上边界则 up_val = 0,否则为当前像素点的值
         up_val = 0;
       } else {
         up_val = prev_p[x];
       }
 
-      if (cur_p[x] > 0) {
-        if (left_val == 0 && up_val == 0) {
+      if (cur_p[x] > 0) {              //PMH：如果像素点不是黑色
+        if (left_val == 0 && up_val == 0) {             //PMH：如果左像素点和上像素点为黑，则说明该点是前景的边界。且没有连接，作为新连通域。label=+1
           // current pixel is foreground and has no connected neighbors
           frame_label_[cur_idx] = labels_.Add();
           root_map_.push_back(-1);
-        } else if (left_val != 0 && up_val == 0) {
+        } else if (left_val != 0 && up_val == 0) {         //PMH：左连接
           // current pixel is foreground and has left neighbor connected
           frame_label_[cur_idx] = frame_label_[left_idx];
-        } else if (left_val == 0 && up_val != 0) {
+        } else if (left_val == 0 && up_val != 0) {         //PMH：上连接
           // current pixel is foreground and has up neighbor connect
           frame_label_[cur_idx] = frame_label_[up_idx];
         } else {
           // current pixel is foreground and is connected to left and up
-          // neighbors
+          // neighbors                                     //PMH：如果是左、上都连接，则哪个label数小用哪个。
           frame_label_[cur_idx] =
               (frame_label_[left_idx] > frame_label_[up_idx])
                   ? frame_label_[up_idx]
@@ -820,10 +792,10 @@ bool ConnectedComponentGenerator::FindConnectedComponents(
     prev_p = cur_p;
   }  // end for y
   if (root_map_.size() != labels_.Num()) {
-    AERROR << "the size of root map and labels are not equal.";
+    std::cerr << "the size of root map and labels are not equal." << std::endl;
     return false;
   }
-  AINFO << "subset number = " << labels_.Size();
+  std::cout << "subset number = " << labels_.Size() << std::endl;
 
   // second loop logic
   cur_idx = 0;
@@ -834,17 +806,18 @@ bool ConnectedComponentGenerator::FindConnectedComponents(
       curt_label = frame_label_[cur_idx];
       if (curt_label >= 0) {
         if (curt_label >= static_cast<int>(labels_.Num())) {
-          AERROR << "curt_label should be smaller than labels.num(): "
-                 << curt_label << " vs. " << labels_.Num();
+          std::cerr << "curt_label should be smaller than labels.num(): "
+                    << curt_label << " vs. " << labels_.Num() << std::endl;
           return false;
         }
         curt_label = labels_.Find(curt_label);
         if (curt_label >= static_cast<int>(root_map_.size())) {
-          AERROR << "curt_label should be smaller than root_map.size() "
-                 << curt_label << " vs. " << root_map_.size();
+          std::cerr << "curt_label should be smaller than root_map.size() "
+                    << curt_label << " vs. " << root_map_.size() << std::endl;
           return false;
         }
-        if (root_map_[curt_label] != -1) {
+
+        if (root_map_[curt_label] != -1) {             //PMH：如果连通域不是-1，则调用AddPixel函数，即
           cc->at(root_map_[curt_label])->AddPixel(x, y);
         } else {
           cc->push_back(std::make_shared<ConnectedComponent>(x, y));
@@ -853,7 +826,7 @@ bool ConnectedComponentGenerator::FindConnectedComponents(
       }
     }  // end for x
   }    // end for y
-  AINFO << "cc number = " << cc_count;
+  std::cout << "The number of cc = " << cc_count << std::endl;
 
   return true;
 }

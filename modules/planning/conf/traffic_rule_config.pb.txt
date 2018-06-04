@@ -19,10 +19,11 @@ config: {
 }
 
 config: {
-  rule_id: CIPV
+  rule_id: FRONT_VEHICLE
   enabled: true
+  front_vehicle {
+  }
 }
-
 config: {
   rule_id: CROSSWALK
   enabled: true
@@ -96,6 +97,7 @@ config: {
   stop_sign {
     stop_distance: 1.0
     min_pass_s_distance: 3.0
+    max_stop_speed: 0.3
     max_valid_stop_distance: 3.0
     stop_duration : 1.0
     watch_vehicle_max_valid_stop_speed: 0.5

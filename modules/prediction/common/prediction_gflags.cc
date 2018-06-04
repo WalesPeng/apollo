@@ -113,8 +113,12 @@ DEFINE_bool(adjust_velocity_by_obstacle_heading, false,
 DEFINE_bool(adjust_velocity_by_position_shift, false,
             "adjust velocity heading to lane heading");
 DEFINE_double(heading_filter_param, 0.99, "heading filter parameter");
+DEFINE_uint32(max_num_lane_point, 20,
+              "The maximal number of lane points to store");
 
-// Cost evaluator
+// Validation checker
+DEFINE_double(centripetal_acc_coeff, 0.5,
+              "Coefficient of centripetal acceleration probability");
 
 // Obstacle trajectory
 DEFINE_double(lane_sequence_threshold, 0.5,
@@ -147,5 +151,13 @@ DEFINE_double(sample_time_gap, 0.2,
               "Gap of time to sample time to get to the lane center");
 DEFINE_double(cost_alpha, 100.0,
               "The coefficient of lateral acceleration in cost function");
-DEFINE_double(default_time_to_lane_center, 5.0,
+DEFINE_double(default_time_to_lat_end_state, 5.0,
               "The default time to lane center");
+DEFINE_double(turning_curvature_lower_bound, 0.02,
+              "The curvature lower bound of turning lane");
+DEFINE_double(turning_curvature_upper_bound, 0.14,
+              "The curvature upper bound of turning lane");
+DEFINE_double(speed_at_lower_curvature, 8.5,
+              "The speed at turning lane with lower bound curvature");
+DEFINE_double(speed_at_upper_curvature, 3.0,
+              "The speed at turning lane with upper bound curvature");

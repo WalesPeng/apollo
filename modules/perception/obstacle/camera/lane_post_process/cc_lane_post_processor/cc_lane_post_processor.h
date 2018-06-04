@@ -19,6 +19,8 @@
 #ifndef MODULES_PERCEPTION_OBSTACLE_CAMERA_CC_LANE_POST_PROCESSOR_H_
 #define MODULES_PERCEPTION_OBSTACLE_CAMERA_CC_LANE_POST_PROCESSOR_H_
 
+#include <boost/circular_buffer.hpp>
+
 #include <memory>
 #include <string>
 #include <utility>
@@ -27,8 +29,12 @@
 #include "Eigen/Core"
 #include "opencv2/opencv.hpp"
 
+#include "modules/perception/proto/lane_post_process_config.pb.h"
+
 #include "modules/common/log.h"
+#include "modules/perception/cuda_util/connected_component_gpu.h"
 #include "modules/perception/lib/config_manager/config_manager.h"
+#include "modules/perception/obstacle/base/object_supplement.h"
 #include "modules/perception/obstacle/camera/common/util.h"
 #include "modules/perception/obstacle/camera/interface/base_lane_post_processor.h"
 #include "modules/perception/obstacle/camera/lane_post_process/cc_lane_post_processor/lane_frame.h"
@@ -36,6 +42,8 @@
 namespace apollo {
 namespace perception {
 
+#define CUDA_CC false
+#define USE_HISTORY_TO_EXTEND_LANE false
 struct CCLanePostProcessorOptions {
   SpaceType space_type;
   ScalarType lane_map_conf_thresh;
@@ -45,9 +53,9 @@ struct CCLanePostProcessorOptions {
 
   CCLanePostProcessorOptions()
       : space_type(SpaceType::VEHICLE),
-        lane_map_conf_thresh(0.5),
-        cc_split_siz(100.0),
-        cc_split_len(50) {}
+        lane_map_conf_thresh(0.5),             // marker的置信度阈值
+        cc_split_siz(100.0),					// 轮廓分割siz
+        cc_split_len(50) {}						// 轮廓分割长度
 };
 
 class CCLanePostProcessor : public BaseCameraLanePostProcessor {
@@ -95,6 +103,16 @@ class CCLanePostProcessor : public BaseCameraLanePostProcessor {
 
   bool EnrichLaneInfo(LaneObjectsPtr lane_objects);
 
+  void InitLaneHistory();
+
+  void FilterWithLaneHistory(LaneObjectsPtr lane_objects);
+
+  bool CorrectWithLaneHistory(int l, LaneObjectsPtr lane_objects,
+                              std::vector<bool> *is_valid);
+  bool FindLane(const LaneObjects &lane_objects, int spatial_label, int *index);
+
+  void ExtendLaneWithHistory(const LaneObject &history, LaneObject *lane);
+
  private:
   CCLanePostProcessorOptions options_;
 
@@ -102,7 +120,11 @@ class CCLanePostProcessor : public BaseCameraLanePostProcessor {
 
   double time_stamp_ = 0.0;
   int frame_id_ = -1;
+#if CUDA_CC
+  std::shared_ptr<ConnectedComponentGeneratorGPU> cc_generator_;
+#else
   std::shared_ptr<ConnectedComponentGenerator> cc_generator_;
+#endif
   std::shared_ptr<LaneFrame> cur_frame_;
   LaneInstancesPtr cur_lane_instances_;
 
@@ -111,6 +133,8 @@ class CCLanePostProcessor : public BaseCameraLanePostProcessor {
   int image_height_ = 1920;
   cv::Rect roi_;
 
+  double scale_;
+  int start_y_pos_;
   bool is_x_longitude_ = true;
 
   std::shared_ptr<Projector<ScalarType>> projector_;
@@ -118,6 +142,14 @@ class CCLanePostProcessor : public BaseCameraLanePostProcessor {
   bool is_init_ = false;
   bool vis_ = false;
 
+  lane_post_process_config::ModelConfigs config_;
+
+  bool use_history_ = false;
+  boost::circular_buffer<LaneObjects> lane_history_;
+  MotionBufferPtr motion_buffer_ = nullptr;
+  const std::vector<SpatialLabelType> interested_labels_ = {         // PMH:感兴趣标签设置为 L_0和 R_0
+      SpatialLabelType::L_0, SpatialLabelType::R_0};
+  LaneObjectsPtr generated_lanes_ = nullptr;
   DISALLOW_COPY_AND_ASSIGN(CCLanePostProcessor);
 };
 

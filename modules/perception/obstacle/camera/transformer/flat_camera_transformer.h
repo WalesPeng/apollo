@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -52,7 +53,7 @@ class FlatCameraTransformer : public BaseCameraTransformer {
 
   bool Init() override;
 
-  bool Transform(std::vector<VisualObjectPtr> *objects) override;
+  bool Transform(std::vector<std::shared_ptr<VisualObject>> *objects) override;
 
   // @brief Set static extrinsic matrix for camera space to car space
   bool SetExtrinsics(const Eigen::Matrix<double, 4, 4> &extrinsics) override;
@@ -64,10 +65,7 @@ class FlatCameraTransformer : public BaseCameraTransformer {
   // (Pitch angle may differ in few degrees due to vehicle dynamics)
   Eigen::Matrix<float, 4, 4> camera2car_;
 
-  // TODO(later): Read from config of static calibration
-  const float kCameraHeight = 1.2f;
-  const Eigen::Matrix<float, 3, 1> kCamera2CarFlatOffset =
-      Eigen::Matrix<float, 3, 1>(2.0f, 0.0f, 0.0f);
+  Eigen::Matrix<float, 3, 1> camera2car_flat_offset_;
 
   Eigen::Matrix<float, 3, 1> MakeUnit(
       const Eigen::Matrix<float, 3, 1> &v) const;

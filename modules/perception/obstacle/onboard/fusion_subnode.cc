@@ -77,8 +77,7 @@ bool FusionSubnode::InitInternal() {
   lane_shared_data_ = dynamic_cast<LaneSharedData *>(
       shared_data_manager_->GetSharedData("LaneSharedData"));
   if (lane_shared_data_ == nullptr) {
-    AERROR << "failed to get shared data instance: LaneSharedData ";
-    return false;
+    AWARN << "failed to get shared data instance: LaneSharedData ";
   }
 
   lane_objects_.reset(new LaneObjects());
@@ -139,8 +138,8 @@ bool FusionSubnode::InitOutputStream() {
 
   auto lane_iter = reserve_field_map.find("lane_event_id");
   if (lane_iter == reserve_field_map.end()) {
-    AWARN << "Failed to find camera_event_id:" << reserve_;
-    AINFO << "camera_event_id will be set -1";
+    AWARN << "Failed to find lane_event_id_:" << reserve_;
+    AINFO << "lane_event_id_ will be set -1";
     lane_event_id_ = -1;
   } else {
     lane_event_id_ = static_cast<EventID>(atoi((lane_iter->second).c_str()));
@@ -151,8 +150,7 @@ bool FusionSubnode::InitOutputStream() {
 
 Status FusionSubnode::ProcEvents() {
   for (auto event_meta : sub_meta_events_) {
-    // ignore lane event from polling
-    if (event_meta.event_id == lane_event_id_) continue;
+    if (event_meta.event_id == lane_event_id_) continue;  // ignore lane event
 
     std::vector<Event> events;
     if (!SubscribeEvents(event_meta, &events)) {
@@ -207,6 +205,13 @@ Status FusionSubnode::Process(const EventMeta &event_meta,
   } else if (event_meta.event_id == radar_event_id_) {
     PERF_BLOCK_END("fusion_radar");
   } else if (event_meta.event_id == camera_event_id_) {
+    for (auto &obj : sensor_objs) {
+      if (obj.sensor_type == SensorType::CAMERA) {
+        AINFO << "fusion received image : " << GLOG_TIMESTAMP(obj.timestamp)
+              << " at time: " << GLOG_TIMESTAMP(TimeUtil::GetCurrentTime());
+        break;
+      }
+    }
     PERF_BLOCK_END("fusion_camera");
   }
 
@@ -215,7 +220,7 @@ Status FusionSubnode::Process(const EventMeta &event_meta,
     fusion_item_ptr->timestamp = objects_[0]->latest_tracked_time;
     const std::string &device_id = events[0].reserve;
     for (auto obj : objects_) {
-      ObjectPtr objclone(new Object());
+      std::shared_ptr<Object> objclone(new Object());
       objclone->clone(*obj);
       fusion_item_ptr->obstacles.push_back(objclone);
     }
@@ -306,11 +311,13 @@ bool FusionSubnode::GetSharedData(const Event &event,
   } else if (event.event_id == camera_event_id_ &&
              camera_object_data_ != nullptr) {
     get_data_succ = camera_object_data_->Get(data_key, objs);
-    // trying to get lane shared data as well
-    Event lane_event;
-    if (event_manager_->Subscribe(lane_event_id_, &lane_event, false)) {
-      get_data_succ = lane_shared_data_->Get(data_key, &lane_objects_);
-      ADEBUG << "getting lane data successfully for data key " << data_key;
+
+    if (lane_shared_data_ != nullptr && lane_event_id_ != -1) {
+      Event lane_event;
+      if (event_manager_->Subscribe(lane_event_id_, &lane_event, false)) {
+        get_data_succ = lane_shared_data_->Get(data_key, &lane_objects_);
+        ADEBUG << "getting lane data successfully for data key " << data_key;
+      }
     }
   } else {
     AERROR << "Event id is not supported. event:" << event.to_string();
@@ -345,14 +352,16 @@ bool FusionSubnode::GeneratePbMsg(PerceptionObstacles *obstacles) {
   }
 
   if (FLAGS_use_navigation_mode) {
-    // generate lane marker protobuf messages
-    LaneMarkers *lane_markers = obstacles->mutable_lane_marker();
-    LaneObjectsToLaneMarkerProto(*(lane_objects_), lane_markers);
-
     // Relative speed of objects + latest ego car speed in X
     for (auto obstacle : obstacles->perception_obstacle()) {
       obstacle.mutable_velocity()->set_x(obstacle.velocity().x() +
                                          chassis_speed_mps_);
+    }
+
+    // generate lane marker protobuf messages
+    if (lane_shared_data_ != nullptr && lane_event_id_ != -1) {
+      LaneMarkers *lane_markers = obstacles->mutable_lane_marker();
+      LaneObjectsToLaneMarkerProto(*(lane_objects_), lane_markers);
     }
   }
 
@@ -368,6 +377,7 @@ void FusionSubnode::RegistAllAlgorithm() {
 void FusionSubnode::OnChassis(const Chassis &chassis) {
   ADEBUG << "Received chassis data: run chassis callback.";
   chassis_.CopyFrom(chassis);
+  ADEBUG << "Received chassis information " << chassis_.ShortDebugString();
   chassis_speed_mps_ = chassis_.speed_mps();
 }
 

@@ -16,6 +16,9 @@
 
 #include "modules/perception/obstacle/onboard/camera_process_subnode.h"
 
+#include "modules/common/time/time_util.h"
+#include "modules/perception/cuda_util/util.h"
+
 namespace apollo {
 namespace perception {
 
@@ -41,9 +44,10 @@ bool CameraProcessSubnode::InitInternal() {
 
   AdapterManager::AddImageFrontCallback(&CameraProcessSubnode::ImgCallback,
                                         this);
-  if (publish_)
+  if (publish_) {
     AdapterManager::AddChassisCallback(&CameraProcessSubnode::ChassisCallback,
                                        this);
+  }
 
   return true;
 }
@@ -52,10 +56,9 @@ bool CameraProcessSubnode::InitCalibration() {
   auto ccm = Singleton<CalibrationConfigManager>::get();
   CameraCalibrationPtr calibrator = ccm->get_camera_calibration();
 
-  // calibrator->get_image_height_width(&image_height_, &image_width_);
+  calibrator->get_image_height_width(&image_height_, &image_width_);
   camera_to_car_ = calibrator->get_camera_extrinsics();
   intrinsics_ = calibrator->get_camera_intrinsic();
-  undistortion_handler_ = calibrator->get_camera_undistort_handler();
   return true;
 }
 
@@ -91,30 +94,51 @@ bool CameraProcessSubnode::InitModules() {
 }
 
 void CameraProcessSubnode::ImgCallback(const sensor_msgs::Image &message) {
-  AdapterManager::Observe();
-  sensor_msgs::Image msg = AdapterManager::GetImageFront()->GetLatestObserved();
+  double timestamp = message.header.stamp.toSec();
+  ADEBUG << "CameraProcessSubnode ImgCallback: timestamp: ";
+  ADEBUG << std::fixed << std::setprecision(64) << timestamp;
+  AINFO << "camera received image : " << GLOG_TIMESTAMP(timestamp)
+        << " at time: " << GLOG_TIMESTAMP(TimeUtil::GetCurrentTime());
+  double curr_timestamp = timestamp * 1e9;
 
-  double timestamp = msg.header.stamp.toSec();
-  AINFO << "CameraProcessSubnode ImgCallback: "
-        << " frame: " << ++seq_num_ << " timestamp: ";
-  AINFO << std::fixed << std::setprecision(64) << timestamp;
-  timestamp_ns_ = timestamp * 1e9;
+  if (FLAGS_skip_camera_frame && timestamp_ns_ > 0.0) {
+    if ((curr_timestamp - timestamp_ns_) < (1e9 / FLAGS_camera_hz) &&
+        curr_timestamp > timestamp_ns_) {
+      ADEBUG << "CameraProcessSubnode Skip frame";
+      return;
+    }
+  }
+
+  timestamp_ns_ = curr_timestamp;
+  ADEBUG << "CameraProcessSubnode Process: "
+         << " frame: " << ++seq_num_;
+  PERF_FUNCTION("CameraProcessSubnode");
+  PERF_BLOCK_START();
 
   cv::Mat img;
   if (!FLAGS_image_file_debug) {
-    MessageToMat(msg, &img);
+    MessageToMat(message, &img);
   } else {
     img = cv::imread(FLAGS_image_file_path, CV_LOAD_IMAGE_COLOR);
   }
-
-  std::vector<VisualObjectPtr> objects;
-  cv::Mat mask = cv::Mat::zeros(img.rows, img.cols, CV_32FC1);
+  std::vector<std::shared_ptr<VisualObject>> objects;
+  cv::Mat mask;
+  PERF_BLOCK_END("CameraProcessSubnode_Image_Preprocess");
 
   detector_->Multitask(img, CameraDetectorOptions(), &objects, &mask);
+  PERF_BLOCK_END("CameraProcessSubnode_detector_");
+
   converter_->Convert(&objects);
+  PERF_BLOCK_END("CameraProcessSubnode_converter_");
+
   transformer_->Transform(&objects);
+  PERF_BLOCK_END("CameraProcessSubnode_transformer_");
+
   tracker_->Associate(img, timestamp, &objects);
+  PERF_BLOCK_END("CameraProcessSubnode_tracker_");
+
   filter_->Filter(timestamp, &objects);
+  PERF_BLOCK_END("CameraProcessSubnode_filter_");
 
   std::shared_ptr<SensorObjects> out_objs(new SensorObjects);
   out_objs->timestamp = timestamp;
@@ -124,6 +148,7 @@ void CameraProcessSubnode::ImgCallback(const sensor_msgs::Image &message) {
   camera_item_ptr->image_src_mat = img.clone();
   mask.copyTo(out_objs->camera_frame_supplement->lane_map);
   PublishDataAndEvent(timestamp, out_objs, camera_item_ptr);
+  PERF_BLOCK_END("CameraProcessSubnode publish in DAG");
 
   if (publish_) PublishPerceptionPb(out_objs);
 }
@@ -136,27 +161,22 @@ void CameraProcessSubnode::ChassisCallback(
 
 bool CameraProcessSubnode::MessageToMat(const sensor_msgs::Image &msg,
                                         cv::Mat *img) {
-  cv::Mat cv_img;
+  *img = cv::Mat(msg.height, msg.width, CV_8UC3);
+  int pixel_num = msg.width * msg.height;
   if (msg.encoding.compare("yuyv") == 0) {
     unsigned char *yuv = (unsigned char *)&(msg.data[0]);
-    cv_img = cv::Mat(msg.height, msg.width, CV_8UC3);
-    traffic_light::Yuyv2rgb(yuv, cv_img.data, msg.height * msg.width);
-    cv::cvtColor(cv_img, cv_img, CV_RGB2BGR);
+    yuyv2bgr(yuv, img->data, pixel_num);
   } else {
     cv_bridge::CvImagePtr cv_ptr =
         cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
-    cv_img = cv_ptr->image;
+    *img = cv_ptr->image;
   }
 
-  if (cv_img.rows != image_height_ || cv_img.cols != image_width_) {
-    cv::resize(cv_img, cv_img, cv::Size(image_width_, image_height_));
-  }
-  *img = cv_img.clone();
   return true;
 }
 
 void CameraProcessSubnode::VisualObjToSensorObj(
-    const std::vector<VisualObjectPtr> &objects,
+    const std::vector<std::shared_ptr<VisualObject>> &objects,
     SharedDataPtr<SensorObjects> *sensor_objects) {
   (*sensor_objects)->sensor_type = SensorType::CAMERA;
   (*sensor_objects)->sensor_id = device_id_;
@@ -166,19 +186,18 @@ void CameraProcessSubnode::VisualObjToSensorObj(
 
   if (!CameraFrameSupplement::state_vars.initialized_) {
     CameraFrameSupplement::state_vars.process_noise *= 10;
-    // CameraFrameSupplement::state_vars.measurement_noise *=10;
     CameraFrameSupplement::state_vars.trans_matrix.block(0, 0, 1, 4) << 1.0f,
         0.0f, 0.33f, 0.0f;
     CameraFrameSupplement::state_vars.trans_matrix.block(1, 0, 1, 4) << 0.0f,
         1.0f, 0.0f, 0.33f;
-    std::cout << "state trans matrix in CameraFrameSupplement is \n"
-              << CameraFrameSupplement::state_vars.trans_matrix << std::endl;
+    ADEBUG << "state trans matrix in CameraFrameSupplement is \n"
+           << CameraFrameSupplement::state_vars.trans_matrix << std::endl;
     CameraFrameSupplement::state_vars.initialized_ = true;
   }
 
   for (size_t i = 0; i < objects.size(); ++i) {
-    VisualObjectPtr vobj = objects[i];
-    ObjectPtr obj(new Object());
+    std::shared_ptr<VisualObject> vobj = objects[i];
+    std::shared_ptr<Object> obj(new Object());
 
     obj->id = vobj->id;
     obj->score = vobj->score;
@@ -193,17 +212,14 @@ void CameraProcessSubnode::VisualObjToSensorObj(
     obj->tracking_time = vobj->track_age;
     obj->latest_tracked_time = vobj->last_track_timestamp;
     obj->velocity = vobj->velocity.cast<double>();
-    obj->anchor_point = obj->center.cast<double>();
+    obj->anchor_point = obj->center;
+    obj->state_uncertainty = vobj->state_uncertainty;
+
     (obj->camera_supplement).reset(new CameraSupplement());
     obj->camera_supplement->upper_left = vobj->upper_left.cast<double>();
     obj->camera_supplement->lower_right = vobj->lower_right.cast<double>();
     obj->camera_supplement->alpha = vobj->alpha;
     obj->camera_supplement->pts8 = vobj->pts8;
-    obj->state_uncertainty = vobj->state_uncertainty;
-    // obj->type_probs.assign(vobj->type_probs,
-    //                        vobj->type_probs + MAX_OBJECT_TYPE);
-    // obj->camera_supplement->pts8.assign(vobj->pts8,
-    //                                     vobj->pts8 + 16);
 
     ((*sensor_objects)->objects).emplace_back(obj);
   }
@@ -212,8 +228,6 @@ void CameraProcessSubnode::VisualObjToSensorObj(
 void CameraProcessSubnode::PublishDataAndEvent(
     const double &timestamp, const SharedDataPtr<SensorObjects> &sensor_objects,
     const SharedDataPtr<CameraItem> &camera_item) {
-//   std::string key = "";
-//   SubnodeHelper::ProduceSharedDataKey(timestamp, device_id_, &key);
   CommonSharedDataKey key(timestamp, device_id_);
   cam_obj_data_->Add(key, sensor_objects);
   cam_shared_data_->Add(key, camera_item);
@@ -230,9 +244,8 @@ void CameraProcessSubnode::PublishDataAndEvent(
 
 void CameraProcessSubnode::PublishPerceptionPb(
     const SharedDataPtr<SensorObjects> &sensor_objects) {
-  AINFO << "Camera publish perception pb data";
+  ADEBUG << "Camera publish perception pb data";
   std::lock_guard<std::mutex> lock(camera_mutex_);
-
   PerceptionObstacles obstacles;
 
   // Header

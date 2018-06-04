@@ -168,9 +168,9 @@ bool Projector<T>::Init(const cv::Rect &roi, const T &max_distance,
       Singleton<CalibrationConfigManager>::get();
 
   const CameraCalibrationPtr camera_calibration =
-      calibration_config_manager->get_camera_calibration();
+      calibration_config_manager->get_camera_calibration();        // PMH：相机到Radar
 
-  trans_mat_ = camera_calibration->get_camera2car_homography_mat().cast<T>();
+  trans_mat_ = camera_calibration->get_camera2car_homography_mat().cast<T>();        // PMH: 根据相机到车身坐标系标定结果获得
 
   // set ROI
   uv_xmin_ = static_cast<T>(roi.x);
@@ -458,25 +458,26 @@ bool Projector<T>::UvToXyImagePoint(const T &u, const T &v,
 template <typename T>
 bool Projector<T>::Project(const T &u, const T &v,
                            Eigen::Matrix<T, 2, 1> *xy_point) {
+	
   if (xy_point == nullptr) {
     AERROR << "xy_point is a null pointer.";
     return false;
   }
 
   Eigen::Matrix<T, 3, 1> uv_point(u, v, static_cast<T>(1));
-  Eigen::Matrix<T, 3, 1> xy_p = trans_mat_ * uv_point;
+  Eigen::Matrix<T, 3, 1> xy_p = trans_mat_ * uv_point;          // PMH：仿射变换： xy_point = 仿射变换矩阵 *  uv_point
 
-  T scale = xy_p(2);
+  T scale = xy_p(2);         // PMH: 第三个元素为缩放倍数
   if (std::abs(scale) < 1e-6) {
     AINFO << "Cannot solve point: scale factor is too small (" << scale << "), "
           << " u=" << u << " v=" << v << ".";
     return false;
   }
 
-  (*xy_point) << xy_p(0) / scale, xy_p(1) / scale;
+  (*xy_point) << xy_p(0) / scale, xy_p(1) / scale;				// PMH：归一化处理。
 
-  if (!std::isfinite((*xy_point)(0)) || std::isnan((*xy_point)(0)) ||
-      !std::isfinite((*xy_point)(1)) || std::isnan((*xy_point)(1))) {
+  if (!std::isfinite((*xy_point)(0)) || std::isnan((*xy_point)(0)) ||        // PMH：std::isnan 检测是否是非数型（NaN）
+      !std::isfinite((*xy_point)(1)) || std::isnan((*xy_point)(1))) {		 // PMH：std::isfinite 检测是否有限（Finite）。
     AINFO << "xy point is not valid: "
           << " u=" << u << " v=" << v << ".";
     return false;

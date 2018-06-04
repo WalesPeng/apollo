@@ -116,7 +116,7 @@ inline int Group::ComputeOrientation(const std::vector<Marker>& markers,
       ADEBUG << "start markers: start_ind=" << start_ind
              << ", end_ind=" << end_ind;
 
-      start_orie = markers.at(start_marker_idx.at(end_ind)).pos -
+      start_orie = markers.at(start_marker_idx.at(end_ind)).pos -               // PMH: 点的情况当然直接为终点与起始点的 pos差
                    markers.at(start_marker_idx.at(start_ind)).pos;
       break;
     }
@@ -129,7 +129,7 @@ inline int Group::ComputeOrientation(const std::vector<Marker>& markers,
       ADEBUG << "start markers: start_ind=" << start_ind
              << ", end_ind=" << end_ind;
 
-      start_orie = markers.at(start_marker_idx.at(end_ind)).pos -
+      start_orie = markers.at(start_marker_idx.at(end_ind)).pos -                // PMH: 线段的情况当然直接为终点pos与起始点的start_pos 差
                    markers.at(start_marker_idx.at(start_ind)).start_pos;
       break;
     }
@@ -192,7 +192,7 @@ inline ScalarType Group::ComputeDistance(const Group& tar_group,
          << ")";
   ADEBUG << "target point = (" << tar_group.start_pos(0) << ", "
          << tar_group.start_pos(1) << ")";
-  Vector2D displacement = tar_group.start_pos - this->end_pos;
+  Vector2D displacement = tar_group.start_pos - this->end_pos;         // displacement =目标graph的起点 - 当前graph的终点
   ScalarType norm_v = this->end_orie.norm();
   if (norm_v < kEpsilon) {
     ADEBUG << "norm of orientation vector for reference group is too small: "
@@ -216,9 +216,9 @@ inline ScalarType Group::ComputeDistance(const Group& tar_group,
   // line equation:
   // A * x + B * y + C = 0
   // A = v_.y(), B = -v_.x(), C = v_.x() * p_.y() - v_.y() * p_.x();
-  // the normal distance from a point (x2, y2) to the line:
-  // d = |A * x2 + B * y2 + C| / sqrt(A^2 + B^2)
-  ScalarType departure_dist =
+  // the normal distance from a point (x2, y2) to the line:    
+  // d = |A * x2 + B * y2 + C| / sqrt(A^2 + B^2)             d为点（x2，y2）到线段的距离
+  ScalarType departure_dist =                 //两个group之间的距离
       std::abs(this->end_orie.y() * tar_group.start_pos.x() -
                this->end_orie.x() * tar_group.start_pos.y() +
                this->end_orie.x() * this->end_pos.y() -

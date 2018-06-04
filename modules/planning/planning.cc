@@ -111,7 +111,7 @@ Status Planning::Init() {
     hdmap_ = HDMapUtil::BaseMapPtr();
     CHECK(hdmap_) << "Failed to load map";
     reference_line_provider_ = std::unique_ptr<ReferenceLineProvider>(
-        new ReferenceLineProvider(hdmap_, config_.smoother_type()));
+        new ReferenceLineProvider(hdmap_));
   }
 
   RegisterPlanners();
@@ -215,7 +215,7 @@ void Planning::RunOnce() {
     // recreate reference line provider in every cycle
     hdmap_ = HDMapUtil::BaseMapPtr();
     reference_line_provider_ = std::unique_ptr<ReferenceLineProvider>(
-        new ReferenceLineProvider(hdmap_, config_.smoother_type()));
+        new ReferenceLineProvider(hdmap_));
   }
 
   // localization
@@ -276,8 +276,18 @@ void Planning::RunOnce() {
   }
 
   const double planning_cycle_time = 1.0 / FLAGS_planning_loop_rate;
+
+  if (FLAGS_use_navigation_mode) {
+    TrajectoryStitcher::TransformLastPublishedTrajectory(
+        planning_cycle_time, last_publishable_trajectory_.get());
+  }
+
   bool is_replan = false;
   std::vector<TrajectoryPoint> stitching_trajectory;
+  stitching_trajectory = TrajectoryStitcher::ComputeStitchingTrajectory(
+      vehicle_state, start_timestamp, planning_cycle_time,
+      last_publishable_trajectory_.get(), &is_replan);
+
   if (FLAGS_use_navigation_mode) {
     std::list<ReferenceLine> reference_lines;
     std::list<hdmap::RouteSegments> segments;
@@ -291,12 +301,14 @@ void Planning::RunOnce() {
       PublishPlanningPb(&not_ready_pb, start_timestamp);
       return;
     }
+    const double init_point_v = stitching_trajectory.front().v();
+    const double init_point_a = stitching_trajectory.front().a();
     stitching_trajectory = TrajectoryStitcher::CalculateInitPoint(
         vehicle_state, reference_lines.front(), &is_replan);
-  } else {
-    stitching_trajectory = TrajectoryStitcher::ComputeStitchingTrajectory(
-        vehicle_state, start_timestamp, planning_cycle_time,
-        last_publishable_trajectory_.get(), &is_replan);
+    if (!is_replan) {
+      stitching_trajectory.back().set_v(init_point_v);
+      stitching_trajectory.back().set_a(init_point_a);
+    }
   }
 
   const uint32_t frame_num = AdapterManager::GetPlanning()->GetSeqNum() + 1;

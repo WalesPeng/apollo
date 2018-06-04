@@ -45,7 +45,7 @@ int NonMask::ComputeOrientation(const Vector2D &p1, const Vector2D &p2,
   return cross > 0 ? 1 : -1;  // 1: clockwise, -1: anti-clockwise
 }
 
-bool NonMask::IsColinear(const Vector2D &p1, const Vector2D &p2,
+bool NonMask::IsColinear(const Vector2D &p1, const Vector2D &p2,     //PMH£∫≈–∂œ «∑Òπ≤œﬂ£ø
                          const Vector2D &q) const {
   ScalarType cross = (q.x() - p1.x()) * (p2.y() - p1.y()) -
                      (p2.x() - p1.x()) * (q.y() - p1.y());

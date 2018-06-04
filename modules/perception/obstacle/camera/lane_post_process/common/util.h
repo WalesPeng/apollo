@@ -48,20 +48,21 @@ bool PolyFit(const std::vector<Eigen::Matrix<T, 2, 1>> &pos_vec,
     return false;
   }
 
-  int n = static_cast<int>(pos_vec.size());
-  if (n <= order) {
+  int n = static_cast<int>(pos_vec.size());			//PMH：n 为点的个数
+  
+  if (n <= order) {								//PMH：点的个数n 要大于次方数 3
     AERROR << "The number of points should be larger than the order. #points = "
            << pos_vec.size();
     return false;
   }
 
-  // create data matrix
+  // create data matrix                     //PMH：创建数据矩阵 n*4
   Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> A(n, order + 1);
   Eigen::Matrix<T, Eigen::Dynamic, 1> y(n);
   Eigen::Matrix<T, Eigen::Dynamic, 1> result;
   for (int i = 0; i < n; ++i) {
-    float base = is_x_axis ? pos_vec[i].x() : pos_vec[i].y();
-    float p_b_j = 1.0;
+    float base = is_x_axis ? pos_vec[i].x() : pos_vec[i].y();          //PMH：如果是x轴，base = pos_vec[i].x()否则等于pos_vec[i].y()
+    float p_b_j = 1.0;                     //PMH：p_b_j 
     for (int j = 0; j <= order; ++j) {
       A(i, j) = p_b_j;
       p_b_j *= base;
@@ -70,11 +71,11 @@ bool PolyFit(const std::vector<Eigen::Matrix<T, 2, 1>> &pos_vec,
   }
 
   // solve linear least squares
-  result = A.householderQr().solve(y);
+  result = A.householderQr().solve(y);            //PMH：求解线性最小二乘法,输出系数result。
   assert(result.size() == order + 1);
 
   for (int j = 0; j <= MAX_POLY_ORDER; ++j) {
-    (*coeff)(j) = (j <= order) ? result(j) : static_cast<T>(0);
+    (*coeff)(j) = (j <= order) ? result(j) : static_cast<T>(0);       //PMH：将result通过 coeff 输出参数系数
   }
 
   return true;
@@ -82,13 +83,13 @@ bool PolyFit(const std::vector<Eigen::Matrix<T, 2, 1>> &pos_vec,
 
 // @brief: evaluate y value of given x for a polynomial function
 template <typename T = ScalarType>
-T PolyEval(const T &x, const int &order,
+T PolyEval(const T &x, const int &order,						//PMH：根据多项式函数输入x，输出 y值
            const Eigen::Matrix<T, MAX_POLY_ORDER + 1, 1> &coeff) {
   int poly_order = order;
-  if (order > MAX_POLY_ORDER) {
+  if (order > MAX_POLY_ORDER) {                                 //限制多项式次方 小于 MAX_POLY_ORDER
     AERROR << "the order of polynomial function must be smaller than "
            << MAX_POLY_ORDER;
-    AINFO << "forcing polynomial order to " << MAX_POLY_ORDER;
+    AINFO << "forcing polynomial order to " << MAX_POLY_ORDER;   
     poly_order = MAX_POLY_ORDER;
   }
 
@@ -104,7 +105,7 @@ T PolyEval(const T &x, const int &order,
 
 // @brief: evaluating y value of given x for a third-order polynomial function
 template <typename T = float>
-T GetPolyValue(T a, T b, T c, T d, T x) {
+T GetPolyValue(T a, T b, T c, T d, T x) {         //PMH： y= d + c*x + b*x^2 + a*x^3
   T y = d;
   T v = x;
   y += (c * v);

@@ -22,40 +22,23 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
-#include <unordered_map>
+
+#include "modules/common/util/file.h"
 
 namespace apollo {
 namespace perception {
 
+using apollo::common::util::GetProtoFromFile;
 using std::pair;
-using std::shared_ptr;
 using std::string;
-using std::to_string;
-using std::unordered_map;
 using std::vector;
-
-bool CompOriginLateralDistObjectID(const pair<ScalarType, int> &a,
-                                   const pair<ScalarType, int> &b) {
-  return a.first > b.first;
-}
 
 bool CCLanePostProcessor::Init() {
   // 1. get model config
-  ConfigManager *config_manager = ConfigManager::instance();
-
-  const ModelConfig *model_config =
-      config_manager->GetModelConfig(this->name());
-  if (model_config == nullptr) {
-    AERROR << "not found model: " << this->name();
-    return false;
-  }
+  CHECK(GetProtoFromFile(FLAGS_cc_lane_post_processor_config_file, &config_));
 
   // 2. get parameters
-  string space_type;
-  if (!model_config->GetValue("space_type", &space_type)) {
-    AERROR << "space type not found.";
-    return false;
-  }
+  string space_type = config_.space_type();
   if (space_type == "vehicle") {
     options_.space_type = SpaceType::VEHICLE;
   } else if (space_type == "image") {
@@ -67,97 +50,56 @@ bool CCLanePostProcessor::Init() {
   }
   options_.frame.space_type = options_.space_type;
 
-  if (!model_config->GetValue("image_width", &image_width_)) {
-    AERROR << "image width not found.";
+  if (!config_.has_image_width() || !config_.has_image_height()) {
+    AERROR << "image width or height not found.";
     return false;
   }
-  if (!model_config->GetValue("image_height", &image_height_)) {
-    AERROR << "image height not found.";
-    return false;
-  }
+  image_width_ = config_.image_width();
+  image_height_ = config_.image_height();
 
-  std::vector<float> roi;
-  if (!model_config->GetValue("roi", &roi)) {
-    AERROR << "roi not found.";
-    return false;
-  }
-  if (static_cast<int>(roi.size()) != 4) {
-    AERROR << "roi format error.";
+  vector<float> roi;
+  if (config_.roi_size() != 4) {
+    AERROR << "roi format error. size = " << config_.roi_size();
     return false;
   } else {
-    roi_.x = static_cast<int>(roi[0]);
-    roi_.y = static_cast<int>(roi[1]);
-    roi_.width = static_cast<int>(roi[2]);
-    roi_.height = static_cast<int>(roi[3]);
+    roi_.x = config_.roi(0);
+    roi_.y = config_.roi(1);
+    roi_.width = config_.roi(2);
+    roi_.height = config_.roi(3);
     options_.frame.image_roi = roi_;
-    AINFO << "project ROI = [" << roi_.x << ", " << roi_.y << ", "
-          << roi_.x + roi_.width - 1 << ", " << roi_.y + roi_.height - 1 << "]";
+    ADEBUG << "project ROI = [" << roi_.x << ", " << roi_.y << ", "
+           << roi_.x + roi_.width - 1 << ", " << roi_.y + roi_.height - 1
+           << "]";
   }
 
-  if (!model_config->GetValue("use_non_mask", &options_.frame.use_non_mask)) {
-    AERROR << "the use_non_mask parameter not found.";
-    return false;
-  }
+  options_.frame.use_non_mask = config_.use_non_mask();
 
-  std::vector<float> non_mask_polygon_points;
-  if (!model_config->GetValue("non_mask", &non_mask_polygon_points)) {
-    AERROR << "non_mask points not found.";
-    return false;
-  }
-
-  if (non_mask_polygon_points.size() % 2 != 0) {
+  if (config_.non_mask_size() % 2 != 0) {
     AERROR << "the number of point coordinate values should be even.";
     return false;
   }
-  size_t non_mask_polygon_point_num = non_mask_polygon_points.size() / 2;
+  size_t non_mask_polygon_point_num = config_.non_mask_size() / 2;
 
   non_mask_.reset(new NonMask(non_mask_polygon_point_num));
   for (size_t i = 0; i < non_mask_polygon_point_num; ++i) {
-    non_mask_->AddPolygonPoint(non_mask_polygon_points.at(2 * i),
-                               non_mask_polygon_points.at(2 * i + 1));
+    non_mask_->AddPolygonPoint(config_.non_mask(2 * i),
+                               config_.non_mask(2 * i + 1));
   }
 
-  if (!model_config->GetValue("lane_map_confidence_thresh",
-                              &options_.lane_map_conf_thresh)) {
-    AERROR << "the confidence threshold of label map not found.";
-    return false;
-  }
-
-  if (!model_config->GetValue("cc_split_siz", &options_.cc_split_siz)) {
-    AERROR << "maximum bounding-box size for splitting CC not found.";
-    return false;
-  }
-  if (!model_config->GetValue("cc_split_len", &options_.cc_split_len)) {
-    AERROR << "unit length for splitting CC not found.";
-    return false;
-  }
+  options_.lane_map_conf_thresh = config_.lane_map_confidence_thresh();
+  options_.cc_split_siz = config_.cc_split_siz();
+  options_.cc_split_len = config_.cc_split_len();
 
   // parameters on generating markers
-  if (!model_config->GetValue("min_cc_pixel_num",
-                              &options_.frame.min_cc_pixel_num)) {
-    AERROR << "minimum CC pixel number not found.";
-    return false;
-  }
-
-  if (!model_config->GetValue("min_cc_size", &options_.frame.min_cc_size)) {
-    AERROR << "minimum CC size not found.";
-    return false;
-  }
-
-  if (!model_config->GetValue(options_.frame.space_type == SpaceType::IMAGE
-                                  ? "min_y_search_offset_image"
-                                  : "min_y_search_offset",
-                              &options_.frame.min_y_search_offset)) {
-    AERROR << "minimum verticle offset used for marker association not found.";
-    return false;
-  }
+  options_.frame.min_cc_pixel_num = config_.min_cc_pixel_num();
+  options_.frame.min_cc_size = config_.min_cc_size();
+  options_.frame.min_y_search_offset =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.min_y_search_offset_image()
+           : config_.min_y_search_offset());
 
   // parameters on marker association
-  string assoc_method;
-  if (!model_config->GetValue("assoc_method", &assoc_method)) {
-    AERROR << "marker association method not found.";
-    return false;
-  }
+  string assoc_method = config_.assoc_method();
   if (assoc_method == "greedy_group_connect") {
     options_.frame.assoc_param.method = AssociationMethod::GREEDY_GROUP_CONNECT;
   } else {
@@ -165,167 +107,93 @@ bool CCLanePostProcessor::Init() {
     return false;
   }
 
-  if (!model_config->GetValue(options_.frame.space_type == SpaceType::IMAGE
-                                  ? "assoc_min_distance_image"
-                                  : "assoc_min_distance",
-                              &options_.frame.assoc_param.min_distance)) {
-    AERROR << "minimum distance threshold for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_min_distance = " << options_.frame.assoc_param.min_distance;
+  options_.frame.assoc_param.min_distance =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.assoc_min_distance_image()
+           : config_.assoc_min_distance());
+  ADEBUG << "assoc_min_distance = " << options_.frame.assoc_param.min_distance;
 
-  if (!model_config->GetValue(options_.frame.space_type == SpaceType::IMAGE
-                                  ? "assoc_max_distance_image"
-                                  : "assoc_max_distance",
-                              &options_.frame.assoc_param.max_distance)) {
-    AERROR << "maximum distance threshold for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_max_distance = " << options_.frame.assoc_param.max_distance;
+  options_.frame.assoc_param.max_distance =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.assoc_max_distance_image()
+           : config_.assoc_max_distance());
+  ADEBUG << "assoc_max_distance = " << options_.frame.assoc_param.max_distance;
 
-  if (!model_config->GetValue("assoc_distance_weight",
-                              &options_.frame.assoc_param.distance_weight)) {
-    AERROR << "distance weight for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_distance_weight = "
-        << options_.frame.assoc_param.distance_weight;
+  options_.frame.assoc_param.distance_weight = config_.assoc_distance_weight();
+  ADEBUG << "assoc_distance_weight = "
+         << options_.frame.assoc_param.distance_weight;
 
-  if (!model_config->GetValue(
-          options_.frame.space_type == SpaceType::IMAGE
-              ? "assoc_max_deviation_angle_image"
-              : "assoc_max_deviation_angle",
-          &options_.frame.assoc_param.max_deviation_angle)) {
-    AERROR << "max deviation angle threshold "
-           << "for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_max_deviation_angle = "
-        << options_.frame.assoc_param.max_deviation_angle;
+  options_.frame.assoc_param.max_deviation_angle =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.assoc_max_deviation_angle_image()
+           : config_.assoc_max_deviation_angle());
+  ADEBUG << "assoc_max_deviation_angle = "
+         << options_.frame.assoc_param.max_deviation_angle;
   options_.frame.assoc_param.max_deviation_angle *= (M_PI / 180.0);
 
-  if (!model_config->GetValue(
-          "assoc_deviation_angle_weight",
-          &options_.frame.assoc_param.deviation_angle_weight)) {
-    AERROR << "deviation angle weight "
-           << "for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_deviation_angle_weight = "
-        << options_.frame.assoc_param.deviation_angle_weight;
+  options_.frame.assoc_param.deviation_angle_weight =
+      config_.assoc_deviation_angle_weight();
+  ADEBUG << "assoc_deviation_angle_weight = "
+         << options_.frame.assoc_param.deviation_angle_weight;
 
-  if (!model_config->GetValue(options_.frame.space_type == SpaceType::IMAGE
-                                  ? "assoc_max_relative_orie_image"
-                                  : "assoc_max_relative_orie",
-                              &options_.frame.assoc_param.max_relative_orie)) {
-    AERROR << "max relative orientation threshold "
-           << "for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_max_relative_orie = "
-        << options_.frame.assoc_param.max_relative_orie;
+  options_.frame.assoc_param.max_relative_orie =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.assoc_max_relative_orie_image()
+           : config_.assoc_max_relative_orie());
+  ADEBUG << "assoc_max_relative_orie = "
+         << options_.frame.assoc_param.max_relative_orie;
   options_.frame.assoc_param.max_relative_orie *= (M_PI / 180.0);
 
-  if (!model_config->GetValue(
-          "assoc_relative_orie_weight",
-          &options_.frame.assoc_param.relative_orie_weight)) {
-    AERROR << "relative orientation weight "
-           << "for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_relative_orie_weight = "
-        << options_.frame.assoc_param.relative_orie_weight;
+  options_.frame.assoc_param.relative_orie_weight =
+      config_.assoc_relative_orie_weight();
+  ADEBUG << "assoc_relative_orie_weight = "
+         << options_.frame.assoc_param.relative_orie_weight;
 
-  if (!model_config->GetValue(
-          options_.frame.space_type == SpaceType::IMAGE
-              ? "assoc_max_departure_distance_image"
-              : "assoc_max_departure_distance",
-          &options_.frame.assoc_param.max_departure_distance)) {
-    AERROR << "max departure distance threshold "
-           << "for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_max_departure_distance = "
-        << options_.frame.assoc_param.max_departure_distance;
+  options_.frame.assoc_param.max_departure_distance =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.assoc_max_departure_distance_image()
+           : config_.assoc_max_departure_distance());
+  ADEBUG << "assoc_max_departure_distance = "
+         << options_.frame.assoc_param.max_departure_distance;
 
-  if (!model_config->GetValue(
-          "assoc_departure_distance_weight",
-          &options_.frame.assoc_param.departure_distance_weight)) {
-    AERROR << "departure distance weight "
-           << "for marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_departure_distance_weight = "
-        << options_.frame.assoc_param.departure_distance_weight;
+  options_.frame.assoc_param.departure_distance_weight =
+      config_.assoc_departure_distance_weight();
+  ADEBUG << "assoc_departure_distance_weight = "
+         << options_.frame.assoc_param.departure_distance_weight;
 
-  if (!model_config->GetValue(
-          options_.frame.space_type == SpaceType::IMAGE
-              ? "assoc_min_orientation_estimation_size_image"
-              : "assoc_min_orientation_estimation_size",
-          &options_.frame.assoc_param.min_orientation_estimation_size)) {
-    AERROR << "minimum size threshold used for orientation estimation"
-           << " in marker association not found.";
-    return false;
-  }
-  AINFO << "assoc_min_orientation_estimation_size = "
-        << options_.frame.assoc_param.min_orientation_estimation_size;
+  options_.frame.assoc_param.min_orientation_estimation_size =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.assoc_min_orientation_estimation_size_image()
+           : config_.assoc_min_orientation_estimation_size());
+  ADEBUG << "assoc_min_orientation_estimation_size = "
+         << options_.frame.assoc_param.min_orientation_estimation_size;
 
   if (options_.frame.assoc_param.method ==
       AssociationMethod::GREEDY_GROUP_CONNECT) {
-    if (!model_config->GetValue(
-            "max_group_prediction_marker_num",
-            &options_.frame.group_param.max_group_prediction_marker_num)) {
-      AERROR << "maximum number of markers used for orientation estimation"
-             << " in greed group connect association not found.";
-      return false;
-    }
+    options_.frame.group_param.max_group_prediction_marker_num =
+        config_.max_group_prediction_marker_num();
   } else {
     AERROR << "invalid marker association method.";
     return false;
   }
-
-  if (!model_config->GetValue(
-          "orientation_estimation_skip_marker_num",
-          &options_.frame.orientation_estimation_skip_marker_num)) {
-    AERROR << "skip marker number used for orientation estimation in "
-           << "marker association";
-    return false;
-  }
+  options_.frame.orientation_estimation_skip_marker_num =
+      config_.orientation_estimation_skip_marker_num();
 
   // parameters on finding lane objects
-  if (!model_config->GetValue("lane_interval_distance",
-                              &options_.frame.lane_interval_distance)) {
-    AERROR << "The predefined lane interval distance is not found.";
-    return false;
-  }
-
-  if (!model_config->GetValue(options_.frame.space_type == SpaceType::IMAGE
-                                  ? "min_instance_size_prefiltered_image"
-                                  : "min_instance_size_prefiltered",
-                              &options_.frame.min_instance_size_prefiltered)) {
-    AERROR << "The minimum size of lane instances "
-           << "to be prefiltered is not found.";
-    return false;
-  }
-
-  if (!model_config->GetValue(options_.frame.space_type == SpaceType::IMAGE
-                                  ? "max_size_to_fit_straight_line_image"
-                                  : "max_size_to_fit_straight_line",
-                              &options_.frame.max_size_to_fit_straight_line)) {
-    AERROR << "The maximum size used for fitting straight lines "
-           << "on lane instances is not found.";
-    return false;
-  }
+  options_.frame.lane_interval_distance = config_.lane_interval_distance();
+  options_.frame.min_instance_size_prefiltered =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.min_instance_size_prefiltered_image()
+           : config_.min_instance_size_prefiltered());
+  options_.frame.max_size_to_fit_straight_line =
+      (options_.frame.space_type == SpaceType::IMAGE
+           ? config_.max_size_to_fit_straight_line_image()
+           : config_.max_size_to_fit_straight_line());
 
   // 3. initialize projector
-  if (!model_config->GetValue("max_distance_to_see_for_transformer",
-                              &max_distance_to_see_)) {
-    AERROR << "maximum perception distance for transformer is not found, "
-              "use default value";
-    return false;
-  }
-  AINFO << "initial max_distance_to_see: " << max_distance_to_see_
-        << " (meters)";
+  max_distance_to_see_ = config_.max_distance_to_see_for_transformer();
+  ADEBUG << "initial max_distance_to_see: " << max_distance_to_see_
+         << " (meters)";
 
   if (options_.space_type == SpaceType::VEHICLE) {
     projector_.reset(new Projector<ScalarType>());
@@ -340,8 +208,20 @@ bool CCLanePostProcessor::Init() {
 
   time_stamp_ = 0.0;
   frame_id_ = 0;
+
+  int lane_map_width = config_.lane_map_width();
+  int lane_map_height = config_.lane_map_height();
+#if CUDA_CC
   cc_generator_.reset(
-      new ConnectedComponentGenerator(image_width_, image_height_, roi_));
+      new ConnectedComponentGeneratorGPU(image_width_, image_height_, roi_));
+#else
+  cc_generator_.reset(
+      new ConnectedComponentGenerator(lane_map_width, lane_map_height,
+      cv::Rect(0, 0, lane_map_width, lane_map_height)));
+#endif
+
+  scale_ = config_.lane_map_scale();
+  start_y_pos_ = config_.start_y_pos();
   cur_frame_.reset(new LaneFrame);
 
   is_init_ = true;
@@ -362,23 +242,23 @@ bool CCLanePostProcessor::AddInstanceIntoLaneObject(
     lane_object->confidence.reserve(20);
   }
 
-  auto graph = cur_frame_->graph(instance.graph_id);
+  auto graph = cur_frame_->graph(instance.graph_id);        // 获取当前帧中 instance的graph_id
 
   int i_prev = -1;
   for (size_t j = 0; j < graph->size(); ++j) {
-    int i = graph->at(j).first;
-    if (cur_frame_->marker(i)->shape_type != MarkerShapeType::POINT) {
+    int i = graph->at(j).first;                              // 取graph的第一个元素marker的id赋值为 i， 针对每个graph生成一个lane_object
+    if (cur_frame_->marker(i)->shape_type != MarkerShapeType::POINT) {          // LINE_SEGMENT的方式
       if (i_prev < 0 ||
-          cur_frame_->marker(i)->cc_id != cur_frame_->marker(i_prev)->cc_id) {
-        lane_object->pos.push_back(cur_frame_->marker(i)->start_pos);
-        lane_object->orie.push_back(cur_frame_->marker(i)->orie);
-        lane_object->image_pos.push_back(
+          cur_frame_->marker(i)->cc_id != cur_frame_->marker(i_prev)->cc_id) {         // 如果marker的cc_id不等于前一个marker的cc_id，则将marker推入lane_object
+        lane_object->pos.push_back(cur_frame_->marker(i)->start_pos);          // pos 即第j个graph的第一个元素 marker的起始顶点start_pos
+        lane_object->orie.push_back(cur_frame_->marker(i)->orie);	           // orie 即第j个graph的第一个元素 marker的方向向量
+        lane_object->image_pos.push_back(                                      // image_pos 即 marker的图像起始点
             cur_frame_->marker(i)->image_start_pos);
-        lane_object->confidence.push_back(cur_frame_->marker(i)->confidence);
+        lane_object->confidence.push_back(cur_frame_->marker(i)->confidence);    // confidence 即 marker的置信度
         lane_object->longitude_start =
-            std::min(lane_object->pos.back().x(), lane_object->longitude_start);
+            std::min(lane_object->pos.back().x(), lane_object->longitude_start);		// lane_object 的纵向起始点（最小x值，即最左点x坐标）
         lane_object->longitude_end =
-            std::max(lane_object->pos.back().x(), lane_object->longitude_end);
+            std::max(lane_object->pos.back().x(), lane_object->longitude_end);			// lane_object 的纵向终点（最大x值，即最右点x坐标）
         lane_object->point_num++;
       }
     }
@@ -391,7 +271,7 @@ bool CCLanePostProcessor::AddInstanceIntoLaneObject(
         std::min(lane_object->pos.back().x(), lane_object->longitude_start);
     lane_object->longitude_end =
         std::max(lane_object->pos.back().x(), lane_object->longitude_end);
-    lane_object->point_num++;
+    lane_object->point_num++;                      // lane_object 的 point_num个数等于当前帧中 graph的个数
     i_prev = i;
   }
 
@@ -423,7 +303,10 @@ bool CCLanePostProcessor::AddInstanceIntoLaneObject(
     AERROR << "failed to fit " << lane_object->order
            << " order polynomial curve.";
   }
+  // Option 1: Use C0 for lateral distance
   lane_object->lateral_distance = lane_object->model(0);
+  // Option 2: Use y-value of closest point.
+  // lane_object->lateral_distance = lane_object->pos[0].y();
 
   return true;
 }
@@ -444,18 +327,18 @@ bool CCLanePostProcessor::AddInstanceIntoLaneObjectImage(
 
   auto graph = cur_frame_->graph(instance.graph_id);
 
-  ADEBUG << "show points for lane object: ";
+//  ADEBUG << "show points for lane object: ";
 
   ScalarType y_offset = static_cast<ScalarType>(image_height_ - 1);
 
   int i_prev = -1;
-  for (size_t j = 0; j < graph->size(); ++j) {
+  for (size_t j = 0; j < graph->size(); ++j) {       //第j个连通域graph
     int i = graph->at(j).first;
     if (cur_frame_->marker(i)->shape_type != MarkerShapeType::POINT) {
       if (i_prev < 0 ||
           cur_frame_->marker(i)->cc_id != cur_frame_->marker(i_prev)->cc_id) {
-        lane_object->pos.push_back(cur_frame_->marker(i)->start_pos);
-        lane_object->pos.back()(1) = y_offset - lane_object->pos.back()(1);
+        lane_object->pos.push_back(cur_frame_->marker(i)->start_pos);    
+        lane_object->pos.back()(1) = y_offset - lane_object->pos.back()(1);					
         lane_object->orie.push_back(cur_frame_->marker(i)->orie);
         lane_object->orie.back()(1) = -lane_object->orie.back()(1);
         lane_object->image_pos.push_back(
@@ -531,7 +414,10 @@ bool CCLanePostProcessor::AddInstanceIntoLaneObjectImage(
            << " order polynomial curve";
   }
 
+  // Option 1: Use C0 for lateral distance
   lane_object->lateral_distance = lane_object->model(0);
+  // Option 2: Use y-value of closest point.
+  // lane_object->lateral_distance = lane_object->pos[0].y();
 
   return true;
 }
@@ -575,7 +461,7 @@ bool CCLanePostProcessor::GenerateLaneInstances(const cv::Mat &lane_map) {
   vector<ConnectedComponentPtr> cc_list;
   cc_generator_->FindConnectedComponents(lane_mask, &cc_list);
 
-  AINFO << "number of connected components = " << cc_list.size();
+  ADEBUG << "number of connected components = " << cc_list.size();
 
   // 3. split CC and find inner edges
   int tot_inner_edge_count = 0;
@@ -596,9 +482,10 @@ bool CCLanePostProcessor::GenerateLaneInstances(const cv::Mat &lane_map) {
   cur_frame_.reset(new LaneFrame);
 
   if (options_.frame.space_type == SpaceType::IMAGE) {
-    cur_frame_->Init(cc_list, non_mask_, options_.frame);
+    cur_frame_->Init(cc_list, non_mask_, options_.frame, scale_, start_y_pos_);
   } else if (options_.frame.space_type == SpaceType::VEHICLE) {
-    cur_frame_->Init(cc_list, non_mask_, projector_, options_.frame);
+    cur_frame_->Init(cc_list, non_mask_, projector_,
+      options_.frame, scale_, start_y_pos_);
   } else {
     AERROR << "unknown space type: " << options_.frame.space_type;
     return false;
@@ -606,7 +493,7 @@ bool CCLanePostProcessor::GenerateLaneInstances(const cv::Mat &lane_map) {
 
   cur_frame_->Process(cur_lane_instances_);
 
-  AINFO << "number of lane instances = " << cur_lane_instances_->size();
+//  ADEBUG << "number of lane instances = " << cur_lane_instances_->size();
 
   return true;
 }
@@ -623,15 +510,10 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
     AERROR << "input lane map is empty";
     return false;
   }
-  if (lane_map.cols != image_width_) {
-    AERROR << "input lane map width does not match: "
-           << "(" << lane_map.cols << " vs. " << image_width_ << ")";
-    return false;
-  }
-  if (lane_map.rows != image_height_) {
-    AERROR << "input lane map height does not match: "
-           << "(" << lane_map.rows << " vs. " << image_height_ << ")";
-    return false;
+
+  if (options.use_lane_history &&
+      (!use_history_ || time_stamp_ > options.timestamp)) {
+    InitLaneHistory();
   }
 
   time_stamp_ = options.timestamp;
@@ -647,7 +529,6 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
   /// generate lane objects
   if (options_.space_type == SpaceType::IMAGE) {
     /// for image space coordinate
-    AINFO << "generate lane objects in image space ...";
     ScalarType x_center = static_cast<ScalarType>(roi_.x + roi_.width / 2);
 
     lane_objects->reset(new LaneObjects());
@@ -663,14 +544,14 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
       }
 
       LaneObject cur_object;
-      AddInstanceIntoLaneObjectImage(*it, &cur_object);
+      AddInstanceIntoLaneObjectImage(*it, &cur_object);    		//PMH：根据 Instance 生成 Lane_object
 
       if (cur_object.lateral_distance <= x_center) {
         // for left lane
         if (is_left_lane_found) {
           continue;
         }
-        (*lane_objects)->push_back(cur_object);
+        (*lane_objects)->push_back(cur_object);              //PMH：新建lane_objects，将 cur_object赋值进来。
         (*lane_objects)->back().spatial = SpatialLabelType::L_0;
         is_left_lane_found = true;
       } else {
@@ -683,37 +564,44 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
         is_right_lane_found = true;
       }
 
-      AINFO << " lane object " << (*lane_objects)->back().GetSpatialLabel()
-            << " has " << (*lane_objects)->back().pos.size() << " points: "
-            << "lateral distance = "
-            << (*lane_objects)->back().lateral_distance;
+      ADEBUG << " lane object " << (*lane_objects)->back().GetSpatialLabel()
+             << " has " << (*lane_objects)->back().pos.size() << " points: "
+             << "lateral distance = "
+             << (*lane_objects)->back().lateral_distance;
     }
 
   } else {
     /// for vehicle space coordinate
     // select lane instances with non-overlap assumption
-    AINFO << "generate lane objects ...";
+    // ADEBUG << "generate lane objects ...";
     lane_objects->reset(new LaneObjects());
     (*lane_objects)->reserve(2 * MAX_LANE_SPATIAL_LABELS);
     vector<pair<ScalarType, int>> origin_lateral_dist_object_id;
     origin_lateral_dist_object_id.reserve(2 * MAX_LANE_SPATIAL_LABELS);
     int count_lane_objects = 0;
+    ADEBUG << "cur_lane_instances_->size(): " << cur_lane_instances_->size();
     for (auto it = cur_lane_instances_->begin();
          it != cur_lane_instances_->end(); ++it) {
-      ADEBUG << "for lane instance " << it - cur_lane_instances_->begin();
+       ADEBUG << "for lane instance " << it - cur_lane_instances_->begin();
 
       // ignore current instance if it is too small
       if (it->siz < options_.frame.min_instance_size_prefiltered) {
-        ADEBUG << "current instance is too small: " << it->siz;
+        ADEBUG << "current lane instance is too small: " << it->siz;
         continue;
       }
 
       LaneObject cur_object;
-      AddInstanceIntoLaneObject(*it, &cur_object);
+      
+	  (*it, &cur_object);
 
       if ((*lane_objects)->empty()) {
         // create a new lane object
+
         (*lane_objects)->push_back(cur_object);
+        ADEBUG << " lane object XXX has"
+             << (*lane_objects)->at(count_lane_objects).pos.size()
+             << " points, lateral distance="
+             << (*lane_objects)->at(count_lane_objects).lateral_distance;
         origin_lateral_dist_object_id.push_back(
             std::make_pair(cur_object.lateral_distance, count_lane_objects++));
         ADEBUG << "generate a new lane object from instance";
@@ -725,7 +613,7 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
       vector<pair<ScalarType, ScalarType>> lateral_distances(
           count_lane_objects);
       size_t cross_over_lane_object_id = 0;
-      for (size_t k = 0; k < (*lane_objects)->size(); ++k) {
+      for (size_t k = 0; k < (*lane_objects)->size(); ++k) {          // 对于第k个lane_object，如果与其拟合的曲线相交则忽略
         // min distance to instance group
         lateral_distances[k].first = std::numeric_limits<ScalarType>::max();
         // max distance to instance group
@@ -733,46 +621,61 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
 
         // determine whether cross over or not
         for (size_t i = 0; i < cur_object.pos.size(); ++i) {
-          ScalarType deta_y =
+		//PMH:  delta_y 即实际车道线y 减去拟合曲线计算得到的y之间差值.
+          ScalarType delta_y =
               cur_object.pos[i].y() - PolyEval(cur_object.pos[i].x(),
                                                (*lane_objects)->at(k).order,
                                                (*lane_objects)->at(k).model);
+          // lateral_distances[k].first keeps min delta_y of lane line points
+          // from the fitted curve          第1值保存的最小delta_y
           lateral_distances[k].first =
-              std::min(lateral_distances[k].first, deta_y);
+              std::min(lateral_distances[k].first, delta_y);
+          // lateral_distances[k].second keeps max delta_y of lane line points
+          // from the fitted curve			第2值保存了的最大delta_y
           lateral_distances[k].second =
-              std::max(lateral_distances[k].second, deta_y);
+              std::max(lateral_distances[k].second, delta_y);
+		  
+		  //PMH: 如果最大值和最小值为一正一负，则说明拟合曲线与实际车道线有相交
           if (lateral_distances[k].first * lateral_distances[k].second < 0) {
             is_cross_over = true;
           }
+		  
+		  
           if (is_cross_over) {
             break;
           }
         }
 
+		//PMH: 记录下有相交的车道线ID
         if (is_cross_over) {
           cross_over_lane_object_id = k;
           break;
         }
       }
+	  
       if (is_cross_over) {
-        ADEBUG << "instance crosses over lane object "
-               << cross_over_lane_object_id;
+        ADEBUG << "Lane " << cross_over_lane_object_id
+               << "crosses over cur_lane. Eliminated.";
+        for (size_t i = 0; i < cur_object.pos.size(); ++i) {
+          ADEBUG << "[" << cur_object.pos[i].x() << ", "
+                 << cur_object.pos[i].y() << "]";
+        }
         continue;
       }
 
-      // search the very left lane w.r.t. current instance
+      // search the left-most lane w.r.t. current instance so far
       int left_lane_id = -1;
-      ScalarType left_lane_dist = -std::numeric_limits<ScalarType>::max();
+      ScalarType left_lane_dist = -std::numeric_limits<ScalarType>::max();      //PMH：将left_lane_dist初始化为int类型的最大可能值并取负
       for (int k = 0; k < count_lane_objects; ++k) {
-        if (lateral_distances[k].second <= 0) {
+        if (lateral_distances[k].second <= 0) {			// 最大delta_y（实际-拟合线）小于0，说明该第k个lane_object为左车道线。
           if (lateral_distances[k].second > left_lane_dist) {
-            left_lane_dist = lateral_distances[k].second;
+            left_lane_dist = lateral_distances[k].second;        //如果最大delta_y 比之前的 left_lane_dist 大，则更新 left_lane_dist ，直到其为最大。
             left_lane_id = k;
           }
         }
       }
-      if ((left_lane_id >= 0) &&
-          (origin_lateral_dist_object_id.at(left_lane_id).first -
+      if ((left_lane_id >= 0) &&                                                //PMH：如果找到左车道线，且其与cur_object.lateral_distance 距离小于设定值，则 continue。
+        (origin_lateral_dist_object_id.at(left_lane_id).first -
                cur_object.lateral_distance <
            MIN_BETWEEN_LANE_DISTANCE)) {
         ADEBUG << "too close to left lane object (" << left_lane_id << "): "
@@ -782,7 +685,7 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
         continue;
       }
 
-      // search the very right lane w.r.t. current instance
+      // search the right-most lane w.r.t. current instance so far
       int right_lane_id = -1;
       ScalarType right_lane_dist = std::numeric_limits<ScalarType>::max();
       for (int k = 0; k < count_lane_objects; ++k) {
@@ -793,7 +696,7 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
           }
         }
       }
-      if ((right_lane_id >= 0) &&
+      if ((right_lane_id >= 0) &&											//PMH：如果找到右车道线，且cur_object.lateral_distance 与其距离小于设定值，则 continue。
           (cur_object.lateral_distance -
                origin_lateral_dist_object_id.at(right_lane_id).first <
            MIN_BETWEEN_LANE_DISTANCE)) {
@@ -803,61 +706,89 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
                << "(" << MIN_BETWEEN_LANE_DISTANCE << ")";
         continue;
       }
-
       // accept the new lane object
-      (*lane_objects)->push_back(cur_object);
+      (*lane_objects)->push_back(cur_object);                             	//PMH：将cur_object压入 lane_objects，并输出其有多少个点，横向距离为多少
+        ADEBUG << " lane object XXX has"
+            << (*lane_objects)->at(count_lane_objects).pos.size()
+            << " points, lateral distance="
+            << (*lane_objects)->at(count_lane_objects).lateral_distance;
       origin_lateral_dist_object_id.push_back(
           std::make_pair(cur_object.lateral_distance, count_lane_objects++));
-      ADEBUG << "generate a new lane object from instance.";
+//      ADEBUG << "generate a new lane object from instance.";
     }
 
     // determine spatial label of lane object
-    std::sort(origin_lateral_dist_object_id.begin(),
+    // Sort lanes with C0
+    std::sort(origin_lateral_dist_object_id.begin(),             //PMH：对比 origin_lateral_dist_object_id 的 cur_object.lateral_distance，由大到小排列。
               origin_lateral_dist_object_id.end(),
-              CompOriginLateralDistObjectID);
-    int i_l0 = -1;
+              [](const pair<ScalarType, int> &a,
+                 const pair<ScalarType, int> &b) { return a.first > b.first; });
+
+    int index_closest_left = -1;
     for (int k = 0; k < count_lane_objects; ++k) {
-      if (origin_lateral_dist_object_id[k].first >= 0) {
-        i_l0 = k;
+      if (origin_lateral_dist_object_id[k].first >= 0) {         //PMH ：横向距离 cur_object.lateral_distance大于0，则将 index_closest_left记录下来，
+																 //       最后保留的是横向距离最小但大于0的id号 
+        index_closest_left = k;
       } else {
         break;
       }
     }
 
+    std::vector<bool> b_left_index_list(MAX_LANE_SPATIAL_LABELS, false);
     vector<int> valid_lane_objects;
     valid_lane_objects.reserve((*lane_objects)->size());
 
     // for left-side lanes
-    for (int spatial_index = 0; spatial_index <= i_l0; ++spatial_index) {
-      if (spatial_index >= MAX_LANE_SPATIAL_LABELS) {
+    for (int spatial_index = 0; spatial_index <= index_closest_left;
+         ++spatial_index) {
+      if (spatial_index >= MAX_LANE_SPATIAL_LABELS) {            //PMH：左侧车道线数量超过 3 条，直接 break
         break;
       }
-      int i_l = i_l0 - spatial_index;
-      int object_id = origin_lateral_dist_object_id.at(i_l).second;
-      (*lane_objects)->at(object_id).spatial =
-          static_cast<SpatialLabelType>(spatial_index);
-      valid_lane_objects.push_back(object_id);
+      int i_l = index_closest_left - spatial_index;              //PMH： i_l 为从最近左车道线往外数的id号
+      int object_id = origin_lateral_dist_object_id.at(i_l).second;              //PMH：object_id 为上述 i_l车道线的编号
+      float lateral_distance = origin_lateral_dist_object_id.at(i_l).first;
 
-      AINFO << " lane object "
+      int index = floor(lateral_distance * INVERSE_AVEAGE_LANE_WIDTH_METER);        //PMH：floor函数（即向下取整），index = lateral_distance/ 通常车道线宽度3.7m     知道是由内向外第几条车道线
+      if (index < 0 || index > MAX_LANE_SPATIAL_LABELS - 1) {
+        continue;                                             //PMH：index小于0，或大于2条
+      }
+      if (b_left_index_list[index] == true) {
+        continue;
+      }
+      b_left_index_list[index] = true;                        //PMH：b_left_index_list[index] 
+      (*lane_objects)->at(object_id).spatial =
+          static_cast<SpatialLabelType>(index);
+      valid_lane_objects.push_back(object_id);                //PMH：推入有效车道线 id号
+      ADEBUG << " lane object "
             << (*lane_objects)->at(object_id).GetSpatialLabel() << " has "
             << (*lane_objects)->at(object_id).pos.size() << " points: "
             << "lateral distance="
             << (*lane_objects)->at(object_id).lateral_distance;
     }
-
     // for right-side lanes
-    int i_r = i_l0 + 1;
+    std::vector<bool> b_right_index_list(MAX_LANE_SPATIAL_LABELS, false);
+    int i_r = index_closest_left + 1;							//PMH： i_r 为从最近右车道线往外数的id号
     for (int spatial_index = 0; spatial_index < MAX_LANE_SPATIAL_LABELS;
          ++spatial_index, ++i_r) {
-      if (i_r >= count_lane_objects) {
+      if (i_r >= count_lane_objects) {							//PMH： 超过车道线总数则 break
         break;
       }
       int object_id = origin_lateral_dist_object_id.at(i_r).second;
-      (*lane_objects)->at(object_id).spatial = static_cast<SpatialLabelType>(
-          MAX_LANE_SPATIAL_LABELS + spatial_index);
-      valid_lane_objects.push_back(object_id);
+      float lateral_distance = -origin_lateral_dist_object_id.at(i_r).first;     //PMH： 右车道线横向距离 取负
 
-      AINFO << " lane object "
+      int index = floor(lateral_distance * INVERSE_AVEAGE_LANE_WIDTH_METER);
+      if (index < 0 || index > MAX_LANE_SPATIAL_LABELS - 1) {
+        continue;
+      }
+      if (b_right_index_list[index] == true) {
+        continue;
+      }
+      b_right_index_list[index] = true;
+      (*lane_objects)->at(object_id).spatial =
+          static_cast<SpatialLabelType>(MAX_LANE_SPATIAL_LABELS + index);
+
+      valid_lane_objects.push_back(object_id);
+      ADEBUG << " lane object "
             << (*lane_objects)->at(object_id).GetSpatialLabel() << " has "
             << (*lane_objects)->at(object_id).pos.size() << " points: "
             << "lateral distance="
@@ -868,7 +799,7 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
       return false;
     }
 
-    // keep only the lane objects with valid spatial labels
+    // keep only the lane objects with valid spatial labels      //PMH：将lane_objects压缩仅剩 valid_lane_objects
     std::sort(valid_lane_objects.begin(), valid_lane_objects.end());
     for (size_t i = 0; i < valid_lane_objects.size(); ++i) {
       (*lane_objects)->at(i) = (*lane_objects)->at(valid_lane_objects[i]);
@@ -876,20 +807,259 @@ bool CCLanePostProcessor::Process(const cv::Mat &lane_map,
     (*lane_objects)->resize(valid_lane_objects.size());
   }
 
-  AINFO << "number of lane objects = " << (*lane_objects)->size();
-  if (options_.space_type != SpaceType::IMAGE) {
-    if (!CompensateLaneObjects((*lane_objects))) {
-      AERROR << "fail to compensate lane objects.";
-      return false;
-    }
-  }
-  EnrichLaneInfo((*lane_objects));
+  ADEBUG << "number of lane objects = " << (*lane_objects)->size();
+  // if (options_.space_type != SpaceType::IMAGE) {
+  //  if (!CompensateLaneObjects((*lane_objects))) {         //pmh 如果是车辆坐标系，则可以根据单车道线补齐另一条车道线。现已注销
+  //     AERROR << "fail to compensate lane objects.";
+  //     return false;
+  //   }
+  // }
 
+  EnrichLaneInfo((*lane_objects));
+  
+  ADEBUG << "use_lane_history_: " << use_history_;
+  if (use_history_) {
+    //  FilterWithLaneHistory(*lane_objects);
+    std::vector<bool> is_valid(generated_lanes_->size(), false);     // 生成和generated_lanes一样个数的容器，内部元素初始化为 false 
+    size_t l = 0;
+    for (l = 0; l < generated_lanes_->size(); l++) {
+      CorrectWithLaneHistory(l, *lane_objects, &is_valid);         //PMH: 依次校正
+    }
+
+    l = 0;
+    while (l < is_valid.size() && !is_valid[l]) {
+      l++;
+    }
+    if (l < is_valid.size()) {
+      lane_history_.push_back(*(*lane_objects));        // PMH：采用链表list形式
+    } else {
+      if (!lane_history_.empty()) {
+        lane_history_.pop_front();       // 删除list中的第一个数据，即清楚掉最早的 lane_history
+      }
+    }
+
+    for (l = 0; l < is_valid.size(); l++) {
+      if (!is_valid[l]) {
+        (*lane_objects)->push_back(generated_lanes_->at(l));
+        AINFO << "use history instead of current lane detection";
+        AINFO << generated_lanes_->at(l).model;
+      }
+    }
+#if USE_HISTORY_TO_EXTEND_LANE
+    for (size_t i = 0; i < generated_lanes_->size(); i++) {
+      if (is_valid[i]) {
+        int j = 0;
+        if (FindLane(*(*lane_objects),
+            generated_lanes_->at(i).spatial, &j)) {            // 找到 L_0和R_0 标签的车道线
+          ExtendLaneWithHistory(generated_lanes_->at(i),
+                                &((*lane_objects)->at(j)));
+        }
+      }
+    }
+
+#endif  // USE_HISTORY_TO_EXTEND_LANE
+    auto vs = options.vehicle_status;
+    for (auto &m : *motion_buffer_) {
+      m.motion *= vs.motion;
+    }
+    motion_buffer_->push_back(vs);
+  }
   return true;
 }
 
+
+
+
+bool CCLanePostProcessor::CorrectWithLaneHistory(int l,
+        LaneObjectsPtr lane_objects, std::vector<bool> *is_valid) {        //根据历史车道线检测当前lane_object是否有效
+    // trust current lane or not
+    auto &lane = generated_lanes_->at(l);      // 获取generated_lanes_第 l条lane
+    lane.pos.clear();
+    lane.longitude_start = std::numeric_limits<ScalarType>::max();
+    lane.longitude_end = 0;
+    lane.order = 0;
+    int lane_accum_num = 0;
+    for (std::size_t i = 0; i < lane_history_.size(); i++) {
+      int j = 0;
+      if (!FindLane(lane_history_[i], lane.spatial, &j)) continue;           // 找到历史车道线中与 L_0或 R_0标签对应的lane_object，返回其id为j
+
+      lane_accum_num++;
+      lane.order = std::max(lane.order, lane_history_[i][j].order);      // 将最大次方数赋值给lane.order
+      Vector3D p;
+      Vector2D project_p;
+      for (auto &pos : lane_history_[i][j].pos) {
+        p << pos.x(), pos.y(), 1.0;
+        p = motion_buffer_->at(i).motion * p;
+        project_p << p.x(), p.y();
+        if (p.x() <= 0) continue;
+
+        lane.longitude_start = std::min(p.x(), lane.longitude_start);   //获得其投影点的左起点 和 右终点。
+        lane.longitude_end = std::max(p.x(), lane.longitude_end);
+        lane.pos.push_back(project_p);
+      }
+    }
+    // fit polynomial model and compute lateral distance for lane object
+    lane.point_num = lane.pos.size();
+
+    if (lane.point_num < 3 ||
+        lane.longitude_end - lane.longitude_start <
+            options_.frame.max_size_to_fit_straight_line) {
+      // fit a 1st-order polynomial curve (straight line)
+      lane.order = 1;
+    } else {
+      // fit a 2nd-order polynomial curve;       纵向长度小于4米拟合成2次曲线
+      lane.order = 2;
+    }
+    ADEBUG << "history size: " << lane.point_num;
+	
+    if (lane_accum_num < 2 ||lane.point_num < 2 ||
+        lane.longitude_end - lane.longitude_start < 4.0) {        // 历史车道线纵向长度小于4米的，认为有效。
+      AWARN << "Failed to use history: " << lane_accum_num
+            << " " << lane.point_num << " "
+            << lane.longitude_end - lane.longitude_start;
+      (*is_valid)[l] = true;
+      return (*is_valid)[l];
+    } else if (!PolyFit(lane.pos, lane.order, &(lane.model))) {      //剩余的历史点拟合成曲线，拟合失败的认为当前帧的车道线有效。
+      AWARN << "failed to fit " << lane.order << " order polynomial curve.";
+      (*is_valid)[l] = true;
+      return (*is_valid)[l];
+    }
+    lane.pos_curve.x_start =
+        std::min(lane.longitude_start, static_cast<ScalarType>(0));
+    lane.pos_curve.x_end =
+        std::max(lane.longitude_end, static_cast<ScalarType>(0));
+    // for polynomial curve on vehicle space
+    lane.pos_curve.a = lane.model(3);
+    lane.pos_curve.b = lane.model(2);
+    lane.pos_curve.c = lane.model(1);
+    lane.pos_curve.d = lane.model(0);
+
+
+    // Option 1: Use C0 for lateral distance
+    // lane_object->lateral_distance = lane_object->model(0);
+    // Option 2: Use y-value of closest point.
+    lane.lateral_distance = lane.pos[0].y();
+    int idx = 0;
+    if (!FindLane(*lane_objects, lane.spatial, &idx)) {   // 找到当前车道线中对应的 L_0或R_0 车道线id号
+    //  lane_objects->push_back(lane);
+    } else {
+      ScalarType ave_delta = 0;
+      int count = 0;
+
+      for (auto &pos : lane_objects->at(idx).pos) {
+        if (pos.x() > 1.2 * lane.longitude_end) continue;        // 位于历史帧车道线终点的x值1.2倍之右的点，不纳入计算。
+
+        ave_delta +=                               // 剩余点的y值与历史车道线拟合的曲线y值做差，求delta平均值。
+         std::abs(pos.y() - PolyEval(pos.x(), lane.order, lane.model));
+        count++;
+      }
+      if (count > 0 && ave_delta / count > AVEAGE_LANE_WIDTH_METER / 4.0) {     // 如果 delta平均值超过一般车道线的宽度 1/4，则剔除！
+        ADEBUG << "ave_delta is: " << ave_delta / count;
+        lane_objects->erase(lane_objects->begin() + idx);
+      } else {
+        (*is_valid)[l] = true;
+      }
+    }
+  return (*is_valid)[l];
+}
+
+void CCLanePostProcessor::ExtendLaneWithHistory(
+        const LaneObject &history, LaneObject *lane) {
+  if (history.longitude_end > lane->longitude_end) {     //如果历史车道线的最右点x值大于当前车道线的最右点x值
+    for (auto &p : history.pos) {            //则将历史车道线中位于当前车道线右边的点全部塞入当前车道线中
+      if (p.x() > lane->longitude_end) {
+        lane->pos.push_back(p);
+      }
+    }
+    AINFO << "extend lane with history by "
+          << history.longitude_end - lane->longitude_end;
+	
+    lane->longitude_end = history.longitude_end;     // 更新当前车道线最右点x值
+    lane->pos_curve.x_end =							// 更像拟合曲线的终点x值
+        std::max(lane->longitude_end, static_cast<ScalarType>(0));
+  }
+}
+
+bool CCLanePostProcessor::FindLane(const LaneObjects &lane_objects,
+                                   int spatial_label, int *index) {
+  size_t k = 0;
+  while (k < lane_objects.size() &&          // PMH：在lane_objects中找到指定空间标签的那个，并返回编号index
+         lane_objects.at(k).spatial != spatial_label) {
+    k++;
+  }
+  if (k == lane_objects.size()) {         // PMH：k= lane_objects整个数量时，表示找不到
+    return false;
+  } else {
+    *index = k;
+    return true;
+  }
+}
+
+void CCLanePostProcessor::InitLaneHistory() {
+  use_history_ = true;
+  AINFO << "Init Lane History Start;";
+  if (!lane_history_.empty()) {
+    lane_history_.clear();
+  } else {
+    lane_history_.set_capacity(MAX_LANE_HISTORY);        // PMH：最多10帧
+  }
+  if (motion_buffer_ != nullptr) {
+    motion_buffer_->clear();
+  } else {
+    motion_buffer_ = std::make_shared<MotionBuffer>(MAX_LANE_HISTORY);
+  }
+  if (generated_lanes_ != nullptr) {
+    generated_lanes_->clear();
+    generated_lanes_->resize(interested_labels_.size(), LaneObject());       // PMH：如果generated_lanes_原来不为空，则重新修改尺寸到 LaneObject()大小
+  } else {
+    generated_lanes_ =									// PMH：make_shared是生成一个共享型智能指针，generated_lanes是生成左右历史车道线，即L_0和R_0
+  }
+      std::make_shared<LaneObjects>(interested_labels_.size(), LaneObject());
+  }
+  for (std::size_t i = 0; i < generated_lanes_->size(); i++) {
+    generated_lanes_->at(i).spatial = interested_labels_[i];        // PMH：generated_lanes_和interested_labels_的车道线标志一样，即L_0和R_0
+  }
+  AINFO << "Init Lane History Done;";
+}
+
+void CCLanePostProcessor::FilterWithLaneHistory(LaneObjectsPtr lane_objects) {
+  std::vector<int> erase_idx;
+  for (size_t i = 0; i < lane_objects->size(); i++) {
+    Eigen::Vector3f start_pos;
+    start_pos << lane_objects->at(i).pos[0].x(), lane_objects->at(i).pos[0].y(), 1.0;         // 将起点的x、y值和scale=1.0放入 start_pos中
+
+    for (size_t j = 0; j < lane_history_.size(); j++) {     		// PMH：lane_history_包含第j帧的各条车道线 
+      // iter to find corresponding lane
+      size_t k;
+      for (k = 0; k < lane_history_[j].size(); k++) {
+        if (lane_history_[j][k].spatial == lane_objects->at(i).spatial) {		// PMH：迭代找到对应第j帧中第k条车道线L0~L3，R0~R3
+          break;
+        }
+      }
+      // if not exist, skip               
+      if (k == lane_history_[j].size()) {                   // PMH：没找到则跳出。继续找下一帧。
+        continue;
+      }
+      // project start_pos to history, check lane stability
+      auto project_pos = motion_buffer_->at(j).motion * start_pos;      // PMH：project_pos 用的是motion*start_pos
+      auto &lane_object = lane_history_[j][k];        		// PMH：利用历史车道线的曲率拟合的点与实际点做差，如果差值超过车道3.7米宽则剔除
+      ScalarType delta_y =
+          project_pos.y() -
+          PolyEval(project_pos.x(), lane_object.order, lane_object.model);
+      // delete if too far from polyline
+      if (std::abs(delta_y) > AVEAGE_LANE_WIDTH_METER) {
+        erase_idx.push_back(i);
+        break;
+      }
+    }
+  }
+  for (size_t i = erase_idx.size() - 1; i >= 0; i--) {
+    lane_objects->erase(lane_objects->begin() + erase_idx[i]);      // PMH：去除车道线
+  }
+}
+
 bool CCLanePostProcessor::CompensateLaneObjects(LaneObjectsPtr lane_objects) {
-  if (lane_objects == NULL) {
+  if (lane_objects == nullptr) {
     AERROR << "lane_objects is a null pointer.";
     return false;
   }
@@ -909,12 +1079,11 @@ bool CCLanePostProcessor::CompensateLaneObjects(LaneObjectsPtr lane_objects) {
   }
 
   if ((has_ego_lane_left && has_ego_lane_right) ||
-      (!has_ego_lane_left && !has_ego_lane_right)) {
+      (!has_ego_lane_left && !has_ego_lane_right)) {        // PMH：如果同时有 或 同时没有左右车道线，返回true
     return true;
   }
 
   if (!has_ego_lane_left) {
-    AINFO << "add virtual lane L_0 ...";
     if (ego_lane_right_idx == -1) {
       AERROR << "failed to compensate left ego lane due to no right ego lane.";
       return false;
@@ -923,20 +1092,20 @@ bool CCLanePostProcessor::CompensateLaneObjects(LaneObjectsPtr lane_objects) {
     LaneObject virtual_ego_lane_left = lane_objects->at(ego_lane_right_idx);
 
     virtual_ego_lane_left.spatial = SpatialLabelType::L_0;
-    virtual_ego_lane_left.is_compensated = true;
+    virtual_ego_lane_left.is_compensated = true;             // PMH：如果没有左车道线，补齐虚拟L_0，和右车道线长度一样
 
-    for (size_t i = 0; i < virtual_ego_lane_left.pos.size(); ++i) {
+    for (size_t i = 0; i < virtual_ego_lane_left.pos.size(); ++i) {         //PMH：虚拟左车道线的y值都加4米？
       virtual_ego_lane_left.pos[i](1) += options_.frame.lane_interval_distance;
     }
-    virtual_ego_lane_left.lateral_distance +=
+    virtual_ego_lane_left.lateral_distance +=         // PMH：横向距离也加4米
         options_.frame.lane_interval_distance;
-    virtual_ego_lane_left.model(0) += options_.frame.lane_interval_distance;
+    virtual_ego_lane_left.model(0) += options_.frame.lane_interval_distance;	// PMH：Y方向截距也加4米
 
-    lane_objects->push_back(virtual_ego_lane_left);
+    lane_objects->push_back(virtual_ego_lane_left);		// PMH：将虚拟车道线返回置 lane_objects里面去
   }
 
   if (!has_ego_lane_right) {
-    AINFO << "add virtual lane R_0 ...";
+    ADEBUG << "add virtual lane R_0 ...";
     if (ego_lane_left_idx == -1) {
       AERROR << "failed to compensate right ego lane due to no left ego lane.";
       return false;
@@ -948,7 +1117,7 @@ bool CCLanePostProcessor::CompensateLaneObjects(LaneObjectsPtr lane_objects) {
     virtual_ego_lane_right.is_compensated = true;
 
     for (size_t i = 0; i < virtual_ego_lane_right.pos.size(); ++i) {
-      virtual_ego_lane_right.pos[i](1) -= options_.frame.lane_interval_distance;
+      virtual_ego_lane_right.pos[i](1) -= options_.frame.lane_interval_distance;     // PMH: 右车道线y值都减4米？
     }
     virtual_ego_lane_right.lateral_distance -=
         options_.frame.lane_interval_distance;
@@ -960,8 +1129,10 @@ bool CCLanePostProcessor::CompensateLaneObjects(LaneObjectsPtr lane_objects) {
   return true;
 }
 
-bool CCLanePostProcessor::EnrichLaneInfo(LaneObjectsPtr lane_objects) {
-  if (lane_objects == NULL) {
+
+
+bool CCLanePostProcessor::EnrichLaneInfo(LaneObjectsPtr lane_objects) {					// pmh：优化车道线结果
+  if (lane_objects == nullptr) {
     AERROR << "lane_objects is a null pointer.";
     return false;
   }
